@@ -18,6 +18,7 @@ idf_component_register(
         "ota/ota_manager.c"
         "proxy/http_proxy.c"
         "tools/tool_registry.c"
+        "tools/tool_display.c"
         "tools/tool_web_search.c"
         "tools/tool_get_time.c"
         "tools/tool_files.c"
@@ -44,6 +45,9 @@ idf_component_register(
         "hardware/audio_service.c"
         "tools/tool_audio.c"
         "discord/discord_bot.c"
+        "fonts/Inter_16.c"
+        "fonts/Inter_24.c"
+        "fonts/Inter_48.c"
     INCLUDE_DIRS
         "."
     REQUIRES

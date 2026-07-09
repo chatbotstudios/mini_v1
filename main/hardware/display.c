@@ -11,6 +11,10 @@
 
 static const char *TAG = "display";
 
+LV_FONT_DECLARE(inter_16);
+LV_FONT_DECLARE(inter_24);
+LV_FONT_DECLARE(inter_48);
+
 static lv_obj_t *s_label_wifi;
 static lv_obj_t *s_label_ip;
 static lv_obj_t *s_label_batt;
@@ -20,6 +24,9 @@ static lv_obj_t *s_label_bt;
 static lv_obj_t *s_label_time;
 static lv_obj_t *s_label_uptime;
 static lv_obj_t *s_arc_batt;
+static lv_obj_t *s_splash_screen = NULL;
+
+static void splash_click_cb(lv_event_t * e);
 
 static void create_dashboard_ui(void) {
     bsp_display_lock(0);
@@ -27,56 +34,92 @@ static void create_dashboard_ui(void) {
     lv_obj_t *scr = lv_scr_act();
     lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
     lv_obj_set_style_text_color(scr, lv_color_white(), 0);
+    lv_obj_set_style_text_font(scr, &inter_24, 0);
 
     /* Header */
     lv_obj_t *label_title = lv_label_create(scr);
     lv_label_set_text(label_title, "MIMI");
+    lv_obj_set_style_text_font(label_title, &inter_48, 0);
+    lv_obj_set_style_text_color(label_title, lv_color_hex(0x00FFCC), 0);
     lv_obj_align(label_title, LV_ALIGN_TOP_MID, 0, 10);
 
     /* WiFi Info */
     s_label_wifi = lv_label_create(scr);
     lv_label_set_text(s_label_wifi, LV_SYMBOL_WIFI " OFFLINE");
-    lv_obj_align(s_label_wifi, LV_ALIGN_TOP_LEFT, 10, 40);
+    lv_obj_align(s_label_wifi, LV_ALIGN_TOP_LEFT, 10, 80);
 
     s_label_ip = lv_label_create(scr);
     lv_label_set_text(s_label_ip, "IP: N/A");
-    lv_obj_align(s_label_ip, LV_ALIGN_TOP_LEFT, 10, 60);
+    lv_obj_align(s_label_ip, LV_ALIGN_TOP_LEFT, 10, 110);
 
     /* Battery Info */
     s_label_batt = lv_label_create(scr);
     lv_label_set_text(s_label_batt, LV_SYMBOL_BATTERY_EMPTY " 0% (0.00V)");
-    lv_obj_align(s_label_batt, LV_ALIGN_TOP_LEFT, 10, 90);
+    lv_obj_align(s_label_batt, LV_ALIGN_TOP_LEFT, 10, 150);
 
     s_arc_batt = lv_arc_create(scr);
-    lv_obj_set_size(s_arc_batt, 60, 60);
+    lv_obj_set_size(s_arc_batt, 80, 80);
     lv_arc_set_rotation(s_arc_batt, 270);
     lv_arc_set_bg_angles(s_arc_batt, 0, 360);
-    lv_obj_align(s_arc_batt, LV_ALIGN_TOP_RIGHT, -10, 40);
+    lv_obj_align(s_arc_batt, LV_ALIGN_TOP_RIGHT, -20, 80);
 
     /* Sensors */
     s_label_temp = lv_label_create(scr);
     lv_label_set_text(s_label_temp, "Temp: N/A");
-    lv_obj_align(s_label_temp, LV_ALIGN_TOP_LEFT, 10, 120);
+    lv_obj_align(s_label_temp, LV_ALIGN_TOP_LEFT, 10, 190);
 
     s_label_hum = lv_label_create(scr);
     lv_label_set_text(s_label_hum, "Hum: N/A");
-    lv_obj_align(s_label_hum, LV_ALIGN_TOP_LEFT, 10, 140);
+    lv_obj_align(s_label_hum, LV_ALIGN_TOP_LEFT, 10, 220);
 
     /* Connectivity */
     s_label_bt = lv_label_create(scr);
     lv_label_set_text(s_label_bt, LV_SYMBOL_BLUETOOTH " OFF");
-    lv_obj_align(s_label_bt, LV_ALIGN_TOP_LEFT, 10, 170);
+    lv_obj_align(s_label_bt, LV_ALIGN_TOP_LEFT, 10, 260);
 
     /* Bottom Status */
     s_label_time = lv_label_create(scr);
     lv_label_set_text(s_label_time, "00:00");
-    lv_obj_align(s_label_time, LV_ALIGN_BOTTOM_MID, 0, -30);
+    lv_obj_set_style_text_font(s_label_time, &inter_48, 0);
+    lv_obj_align(s_label_time, LV_ALIGN_BOTTOM_MID, 0, -50);
 
     s_label_uptime = lv_label_create(scr);
     lv_label_set_text(s_label_uptime, "Uptime: 0m");
+    lv_obj_set_style_text_font(s_label_uptime, &inter_16, 0);
+    lv_obj_set_style_text_color(s_label_uptime, lv_color_hex(0xAAAAAA), 0);
     lv_obj_align(s_label_uptime, LV_ALIGN_BOTTOM_MID, 0, -10);
 
+    /* Splash Screen Overlay */
+    s_splash_screen = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_splash_screen); /* Remove default padding, border, and radius */
+    lv_obj_set_size(s_splash_screen, 466, 466);
+    lv_obj_set_style_bg_color(s_splash_screen, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_splash_screen, LV_OPA_COVER, 0);
+    
+    lv_obj_t *splash_title = lv_label_create(s_splash_screen);
+    lv_label_set_text(splash_title, "MIMI");
+    lv_obj_set_style_text_font(splash_title, &inter_48, 0);
+    lv_obj_set_style_text_color(splash_title, lv_color_hex(0xFF0055), 0);
+    lv_obj_align(splash_title, LV_ALIGN_CENTER, 0, -40);
+
+    lv_obj_t *splash_sub = lv_label_create(s_splash_screen);
+    lv_label_set_text(splash_sub, "Gemini AI Agent");
+    lv_obj_set_style_text_font(splash_sub, &inter_24, 0);
+    lv_obj_set_style_text_color(splash_sub, lv_color_white(), 0);
+    lv_obj_align(splash_sub, LV_ALIGN_CENTER, 0, 20);
+
+    lv_obj_add_flag(s_splash_screen, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_splash_screen, splash_click_cb, LV_EVENT_CLICKED, NULL);
+
     bsp_display_unlock();
+}
+
+static void splash_click_cb(lv_event_t * e)
+{
+    lv_obj_t * splash = lv_event_get_target(e);
+    lv_obj_del(splash);
+    s_splash_screen = NULL;
+    ESP_LOGI(TAG, "Splash screen dismissed by touch");
 }
 
 esp_err_t display_init(void) {
@@ -99,6 +142,11 @@ void display_update_dashboard(const char *ssid, const char *ip, float voltage,
                               int batt_pct, float temp, float hum, bool bt_on,
                               int pwr_mode, const char *uptime_str, bool thinking) {
     bsp_display_lock(0);
+
+    if (s_splash_screen) {
+        lv_obj_del(s_splash_screen);
+        s_splash_screen = NULL;
+    }
 
     char buf[64];
 
@@ -148,5 +196,50 @@ void display_update_dashboard(const char *ssid, const char *ip, float voltage,
     snprintf(buf, sizeof(buf), "Uptime: %s", uptime_str ? uptime_str : "0m");
     lv_label_set_text(s_label_uptime, buf);
 
+    bsp_display_unlock();
+}
+
+static lv_obj_t *s_msg_overlay = NULL;
+
+static void msg_click_cb(lv_event_t * e) {
+    if (s_msg_overlay) {
+        lv_obj_del(s_msg_overlay);
+        s_msg_overlay = NULL;
+    }
+}
+
+void display_clear_message(void) {
+    bsp_display_lock(0);
+    if (s_msg_overlay) {
+        lv_obj_del(s_msg_overlay);
+        s_msg_overlay = NULL;
+    }
+    bsp_display_unlock();
+}
+
+void display_show_message(const char *msg) {
+    bsp_display_lock(0);
+    if (s_msg_overlay) {
+        lv_obj_del(s_msg_overlay);
+    }
+    
+    s_msg_overlay = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(s_msg_overlay, LV_PCT(90), LV_PCT(80));
+    lv_obj_align(s_msg_overlay, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(s_msg_overlay, lv_color_hex(0x222222), 0);
+    lv_obj_set_style_border_color(s_msg_overlay, lv_color_hex(0x00FF00), 0);
+    lv_obj_set_style_border_width(s_msg_overlay, 4, 0);
+    
+    lv_obj_t *label = lv_label_create(s_msg_overlay);
+    lv_label_set_text(label, msg);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(label, LV_PCT(100));
+    lv_obj_set_style_text_font(label, &inter_24, 0);
+    lv_obj_set_style_text_color(label, lv_color_white(), 0);
+    lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
+
+    lv_obj_add_flag(s_msg_overlay, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_msg_overlay, msg_click_cb, LV_EVENT_CLICKED, NULL);
+    
     bsp_display_unlock();
 }

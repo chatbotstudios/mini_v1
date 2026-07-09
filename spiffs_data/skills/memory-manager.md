@@ -18,7 +18,7 @@ For context, here is the complete folder and file tree of Mimi's persistent loca
   - `siren.raw`
 - **`/spiffs/resources/`**: Static resource files and assets.
 - **`/spiffs/skills/`**: The core behavioral skill modules (Markdown files).
-  - `bluetooth-navigator.md`, `daily-briefing.md`, `epaper.md`, `hardware_maintenance.md`, `led-indicator.md`, `memory-manager.md`, `mimi-cli.md`, `mimi-rules.md`, `network_wizard.md`, `power_manager.md`, `sd-card.md`, `self_diagnostics.md`, `shtc3.md`, `skill-creator.md`, `weather.md`
+  - `bluetooth-navigator.md`, `daily-briefing.md`, `amoled.md`, `hardware_maintenance.md`, `led-indicator.md`, `memory-manager.md`, `mimi-cli.md`, `mimi-rules.md`, `network_wizard.md`, `power_manager.md`, `sd-card.md`, `self_diagnostics.md`, `qmi8658.md`, `skill-creator.md`, `weather.md`
 - **`/spiffs/tools/`**: Documentation and usage instructions for all registered AI tools.
   - `agent.md`, `bluetooth.md`, `cli.md`, `display.md`, `network.md`, `power.md`, `sense.md`, `storage.md`, `time.md`, `web_search.md`
 - **`/spiffs/vault/`**: Secure storage for keys and tokens.

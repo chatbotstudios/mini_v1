@@ -149,6 +149,12 @@ esp_err_t wifi_manager_start(void) {
   ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
   ESP_ERROR_CHECK(esp_wifi_start());
 
+  /* Disable WiFi Power Save to prevent NO_AP_FOUND and missed beacons */
+  esp_wifi_set_ps(WIFI_PS_NONE);
+  
+  /* Lower TX power to 13 dBm (52 * 0.25) to prevent AXP2101 PMIC brownouts during RF calibration/TX */
+  // esp_wifi_set_max_tx_power(52);
+
   return ESP_OK;
 }
 

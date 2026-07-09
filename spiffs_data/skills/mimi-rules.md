@@ -6,8 +6,8 @@ Mimi possesses a "Local Subconscious" that allows her to monitor hardware sensor
 Rules consist of a **Source**, a **Condition**, a **Threshold**, and an **Action**.
 
 ### 📡 Triggers (Sources)
-- `temp`: Temperature from SHTC3 (°C).
-- `hum`: Humidity from SHTC3 (%).
+- `temp`: Temperature from QMI8658 IMU (°C).
+- `hum`: Humidity from QMI8658 IMU (%).
 - `batt`: Battery Voltage (V).
 - `uptime`: Seconds since boot.
 
@@ -21,7 +21,7 @@ Rules consist of a **Source**, a **Condition**, a **Threshold**, and an **Action
 Actions are CLI commands. Examples:
 - `color red`: Set LED to Red.
 - `color orange -t 10`: Temporary alert.
-- `epaper_refresh`: Clear the screen.
+- `amoled_refresh`: Clear the screen.
 - `restart`: Force a reboot.
 
 ## 📜 Usage Patterns

@@ -15,10 +15,10 @@ When the AI decides to use a tool, it outputs a JSON function call. The ESP32 pa
 ### Hardware Control Tools
 | Tool Name | Description | Target Hardware |
 | :--- | :--- | :--- |
-| `sense` | Queries the I2C sensor and returns precise ambient temperature and humidity. | SHTC3 Sensor |
-| `display_control` | Allows Mimi to take over the ePaper display, scale fonts, draw 16x16 icons, or force an anti-ghosting refresh. | 1.54" ePaper |
+| `sense` | Queries the I2C sensor and returns precise ambient temperature and humidity. | QMI8658 IMU Sensor |
+| `display_control` | Allows Mimi to take over the AMOLED display, scale fonts, draw 16x16 icons, or force an anti-ghosting refresh. | 1.75" AMOLED |
 | `led_control` | Gives Mimi direct control over the Green (Health) and Red (Processing) LEDs to visually signal her status. | GPIO 1 / GPIO 3 |
-| `play_audio` | Accesses the I2S codec to stream raw PCM audio files from the SSD directly to the speaker. | ES8311 DAC |
+| `play_audio` | Accesses the (Audio Disabled) to stream raw PCM audio files from the SSD directly to the speaker. | (Audio Disabled) DAC |
 | `manage_power` | Toggles the CPU between Performance (240MHz) and Balanced (160/80MHz) modes to save battery, and reads the internal ADC voltage. | ESP32-S3 PMU |
 | `manage_bluetooth` | Allows Mimi to scan the area for nearby Bluetooth beacons (phones, trackers) or advertise herself. | NimBLE Stack |
 
@@ -49,7 +49,7 @@ This means **you don't need to recompile the code to teach Mimi new tricks!** Yo
 | `skill-creator.md` | The ultimate self-evolution module. Teaches Mimi how to use the `write_file` tool to generate brand new `.md` skills and save them to her own SSD. |
 | `memory-manager.md` | Instructs Mimi on how to read long conversation logs and compress them into concise bullet points inside a `MEMORY.md` file, preserving tokens. |
 | `daily-briefing.md` | Defines a workflow where Mimi checks the time, reads the battery voltage, checks the weather, and outputs a formatted "Good Morning" message. |
-| `epaper.md` | The "UI Guidelines". Tells Mimi exactly what coordinates, fonts, and limits she must obey if she decides to draw custom UI using `display_control`. |
+| `amoled.md` | The "UI Guidelines". Tells Mimi exactly what coordinates, fonts, and limits she must obey if she decides to draw custom UI using `display_control`. |
 | `bluetooth-navigator.md` | Instructs Mimi on how to interpret nearby BLE beacons to determine if specific people or devices are nearby. |
 
 ---
@@ -63,16 +63,16 @@ The true power of MimiClaw is unleashed when Skills orchestrate Tools. Here are 
 
 **The ReAct Loop:**
 1. **Context Load:** The ESP32 loads `weather.md` from the SSD and feeds it to the AI.
-2. **Tool Call 1:** AI calls `sense{}`. The ESP32 physically pings the SHTC3 and returns `Temp: 30.5C, Hum: 33%`.
+2. **Tool Call 1:** AI calls `sense{}`. The ESP32 physically pings the QMI8658 IMU and returns `Temp: 30.5C, Hum: 33%`.
 3. **Tool Call 2:** AI calls `web_search{"query": "weather forecast today"}`. The ESP32 returns *"Clear skies, no rain."*
 4. **Tool Call 3:** AI realizes it's hot inside and wants to show she's thinking. It calls `led_control{"color": "red", "state": "blink"}`.
 5. **Response:** Finally, the AI formulates the answer: *"It's quite hot inside at 30.5°C, but there's no rain expected outside today. Turning on the AC is recommended!"*
 
 ### Example 2: Self-Modification (Skill Creator)
-**User Request:** *"Mimi, I want you to learn a new skill called 'Crypto Tracker'. When I ask for crypto prices, search the web and then display the top coin on the ePaper screen."*
+**User Request:** *"Mimi, I want you to learn a new skill called 'Crypto Tracker'. When I ask for crypto prices, search the web and then display the top coin on the AMOLED screen."*
 
 **The ReAct Loop:**
-1. **Context Load:** The ESP32 loads `skill-creator.md` and `epaper.md`.
+1. **Context Load:** The ESP32 loads `skill-creator.md` and `amoled.md`.
 2. **Tool Call 1:** AI calls `write_file{"path": "/spiffs/skills/crypto-tracker.md", "content": "..."}`.
 3. **Result:** The C-driver writes the new Markdown file to the physical SSD. 
 4. **Response:** *"I've successfully created the Crypto Tracker skill! You can now ask me for prices anytime."*

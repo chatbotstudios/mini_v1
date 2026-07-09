@@ -22,9 +22,9 @@ static const char *TAG = "battery";
 static adc_oneshot_unit_handle_t s_adc_handle = NULL;
 
 esp_err_t battery_init(void) {
-    ESP_LOGI(TAG, "Initializing battery sensing on GPIO 4 with Control on GPIO 17");
-
-    /* Initialize Battery Control Pin */
+    // ESP_LOGI(TAG, "Initializing battery sensing on GPIO 4 with Control on GPIO 17");
+    /* Disabled for AMOLED migration, AXP2101 PMIC handles battery */
+    /*
     gpio_config_t io_conf = {
         .pin_bit_mask = (1ULL << BATT_CTRL_PIN),
         .mode = GPIO_MODE_OUTPUT,
@@ -42,24 +42,14 @@ esp_err_t battery_init(void) {
         .atten = BATT_ADC_ATTEN,
     };
     ESP_ERROR_CHECK(adc_oneshot_config_channel(s_adc_handle, BATT_ADC_CHAN, &config));
+    */
 
     return ESP_OK;
 }
 
 float battery_get_voltage(void) {
-    if (!s_adc_handle) return 0.0f;
-
-    int raw = 0;
-    ESP_ERROR_CHECK(adc_oneshot_read(s_adc_handle, BATT_ADC_CHAN, &raw));
-
-    /* Convert to voltage: raw * (Vref / resolution) * divider */
-    /* On ESP32-S3 with 12dB atten, Vref is approx 3100mV */
-    float voltage = (float)raw * (3.1f / BATT_ADC_RES) * BATT_DIVIDER_RATIO;
-    
-    /* Apply a small calibration offset if needed (typically -0.05 to +0.05) */
-    voltage += 0.02f; 
-
-    return voltage;
+    /* Mock voltage for now until AXP2101 PMIC is integrated */
+    return 4.0f;
 }
 
 int battery_get_percentage(void) {

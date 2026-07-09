@@ -7,7 +7,8 @@
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE
 #include "lvgl.h"
 #else
-#include "lvgl/lvgl.h"
+#include "lvgl.h"
+#define LV_VERSION_CHECK(x,y,z) 1
 #endif
 
 #ifndef INTER_16

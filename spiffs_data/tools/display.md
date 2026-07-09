@@ -1,5 +1,5 @@
-# Display Control Tool (ePaper)
-The `display_control` tool allows you to write text to the 1.54-inch ePaper screen.
+# Display Control Tool (AMOLED)
+The `display_control` tool allows you to write text to the 1.54-inch AMOLED screen.
 
 ## Usage
 - **Command**: `display_control`

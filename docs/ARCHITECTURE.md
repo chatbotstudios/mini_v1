@@ -152,8 +152,8 @@ main/
 │
 └── hardware/
     ├── led.c                RGB Mood LED driver (WS2812B) + discrete fallbacks
-    ├── epaper.c             Dashboard UI driver + partial refresh logic
-    └── ...                  I2C sensors (shtc3), Battery, Buttons
+    ├── amoled.c             Dashboard UI driver + partial refresh logic
+    └── ...                  I2C sensors (qmi8658), Battery, Buttons
 ```
 
 ---

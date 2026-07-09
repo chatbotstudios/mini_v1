@@ -161,25 +161,17 @@ esp_err_t tool_registry_init(void) {
   };
   register_tool(&df);
 
-  /* Register display_control (DISABLED to prevent LLM interference with UI)
+  /* Register display_control */
   mimi_tool_t dc = {
       .name = "display_control",
-      .description = "Control the physical ePaper display. Write to framebuffer with 'draw', then push to screen with 'push'.",
-      .input_schema_json =
-          "{\"type\":\"object\","
-          "\"properties\":{\"action\":{\"type\":\"string\",\"enum\":[\"draw\","
-          "\"push\",\"refresh\",\"clear\"],\"description\":\"Action to perform\"},"
-          "\"text\":{\"type\":\"string\",\"description\":\"Text to display "
-          "(for 'draw' action)\"},"
-          "\"x\":{\"type\":\"integer\",\"description\":\"X position (0-199)\"},"
-          "\"y\":{\"type\":\"integer\",\"description\":\"Y position (0-199)\"},"
-          "\"scale\":{\"type\":\"integer\",\"description\":\"Font size multiplier (1=small, 2=medium, 3=large)\"},"
-          "\"invert\":{\"type\":\"boolean\",\"description\":\"Draw white text on black background\"}},"
-          "\"required\":[\"action\"]}",
+      .description = "Display a text message on the physical AMOLED screen. Use action='show' or 'clear'.",
+      .input_schema_json = "{\"type\":\"object\",\"properties\":{"
+                "\"action\":{\"type\":\"string\",\"enum\":[\"show\",\"clear\"]},"
+                "\"text\":{\"type\":\"string\",\"description\":\"Text to display on screen\"}"
+                "},\"required\":[\"action\"]}",
       .execute = tool_display_execute,
   };
   register_tool(&dc);
-  */
 
   /* Register sense (DISABLED for AMOLED migration to prevent I2C conflicts)
   mimi_tool_t s = {

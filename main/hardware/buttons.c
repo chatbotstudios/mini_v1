@@ -84,7 +84,11 @@ esp_err_t buttons_init(void) {
   gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
   xTaskCreate(button_task, "button_task", 4096, NULL, 10, NULL);
 
-  gpio_install_isr_service(0);
+  esp_err_t isr_err = gpio_install_isr_service(0);
+  if (isr_err != ESP_OK && isr_err != ESP_ERR_INVALID_STATE) {
+    ESP_LOGE(TAG, "Failed to install ISR service: %s", esp_err_to_name(isr_err));
+    return isr_err;
+  }
   gpio_isr_handler_add(BTN1_PIN, gpio_isr_handler, (void *)BTN1_PIN);
 
   ESP_LOGI(

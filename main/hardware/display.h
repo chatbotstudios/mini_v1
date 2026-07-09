@@ -11,4 +11,7 @@ void display_update_dashboard(const char *ssid, const char *ip, float voltage,
                               int batt_pct, float temp, float hum, bool bt_on,
                               int pwr_mode, const char *uptime_str, bool thinking);
 
+void display_show_message(const char *msg);
+void display_clear_message(void);
+
 #endif // MIMI_DISPLAY_H

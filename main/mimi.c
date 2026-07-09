@@ -240,11 +240,13 @@ void execute_button_action(int action_id) {
       }
     }
   } else if (action_id == 3) {
-    ESP_LOGI(TAG, "TRIPLE CLICK -> Toggle Bluetooth");
+    ESP_LOGI(TAG, "TRIPLE CLICK -> (Bluetooth toggle disabled)");
+    /*
     if (bluetooth_is_enabled())
       bluetooth_deinit();
     else
       bluetooth_init();
+    */
   } else if (action_id == 4) {
     ESP_LOGW(TAG, "LONG PRESS -> Force Reboot!");
     esp_restart();
@@ -276,10 +278,12 @@ void app_main(void) {
   ESP_ERROR_CHECK(display_init());
 
   /* Try to mount SD Card */
+  /*
   esp_err_t sd_err = sd_card_init();
   if (sd_err != ESP_OK) {
     ESP_LOGW(TAG, "SD Card not available.");
   }
+  */
   // ESP_ERROR_CHECK(shtc3_init()); // Disabled for AMOLED migration
   ESP_ERROR_CHECK(buttons_init());
   ESP_ERROR_CHECK(battery_init());

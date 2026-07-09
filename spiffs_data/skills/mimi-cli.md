@@ -19,9 +19,9 @@ Mimi has a direct bridge to her internal firmware console via the `run_cli` tool
 - `ntp_sync`: Force system time synchronization.
 
 ### 🛠 Hardware & Peripherals
-- `i2c_scan`: Find all devices on the I2C bus (SHTC3, etc).
+- `i2c_scan`: Find all devices on the I2C bus (QMI8658 IMU, etc).
 - `sense_raw`: Read raw sensor registers.
-- `epaper_refresh`: Clear ghosting with a full display reset.
+- `amoled_refresh`: Clear ghosting with a full display reset.
 - `bt_info`: Bluetooth stack and MAC address status.
 - `bt_scan`: Discover nearby BLE devices.
 

@@ -25,12 +25,11 @@ The dashboard is structured into organized sections to maximize readability on t
 ### 4. System Status
 (The "STATUS: ONLINE" and "THINKING..." text elements have been intentionally removed to reduce display clutter).
 
-### 5. Connectivity & Power Mode
+### 5. Connectivity
 - **TG**: Telegram Bot connection status icon (`M` icon).
 - **DISC**: Discord Bot connection status icon (`M` icon).
 - **BT**: Bluetooth radio status (Bluetooth icon and `ON`/`OFF`). 
 All three (TG, DISC, BT) are grouped on a single line for optimal readability.
-- **PWR**: The system power mode (`BAL` or `PERF`).
 
 ### 6. Footer (Bottom Center)
 - **Clock & Date**: The current local time and date, synchronized via NTP (e.g., `14:30 27.06.26`). If NTP has not synced yet, a default placeholder time is shown.

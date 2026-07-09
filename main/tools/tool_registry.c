@@ -287,7 +287,7 @@ esp_err_t tool_registry_init(void) {
   };
   register_tool(&lc);
 
-  /* Register play_audio */
+  /* Register play_audio (DISABLED per user request)
   mimi_tool_t au = {
       .name = "play_audio",
       .description = "Play a sound effect or voice recording from the local filesystem.",
@@ -298,6 +298,7 @@ esp_err_t tool_registry_init(void) {
       .execute = tool_audio_play_execute,
   };
   register_tool(&au);
+  */
 
   build_tools_json();
 

@@ -300,9 +300,9 @@ void app_main(void) {
 
   /* 5. Start Hardware Systems */
   rules_engine_init();
-  audio_service_init();
-  audio_service_set_volume(70);
-  audio_service_play_file("/spiffs/audio/boot.raw");
+  // audio_service_init();
+  // audio_service_set_volume(70);
+  // audio_service_play_file("/spiffs/audio/boot.raw");
 
   /* Start Serial CLI */
   ESP_ERROR_CHECK(serial_cli_init());
@@ -319,6 +319,8 @@ void app_main(void) {
 
       /* Sync Time */
       ESP_LOGI(TAG, "Syncing time via SNTP...");
+      setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
+      tzset();
       esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
       esp_sntp_setservername(0, "pool.ntp.org");
       esp_sntp_init();

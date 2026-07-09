@@ -463,24 +463,18 @@ void epaper_show_dashboard(const char *ssid, const char *ip, float voltage,
 
   // 5. Connectivity
   extern bool telegram_bot_is_connected(void);
-  epaper_draw_icon(12, 108, ICON_MAIL, !telegram_bot_is_connected());
-  epaper_draw_text_ext("TG", 34, 112, 1, false);
+  epaper_draw_icon(12, 100, ICON_MAIL, !telegram_bot_is_connected());
+  epaper_draw_text_ext("TG", 34, 104, 1, false);
 
   extern bool discord_bot_is_connected(void);
-  epaper_draw_icon(72, 108, ICON_MAIL, !discord_bot_is_connected());
-  epaper_draw_text_ext("DISC", 94, 112, 1, false);
+  epaper_draw_icon(72, 100, ICON_MAIL, !discord_bot_is_connected());
+  epaper_draw_text_ext("DISC", 94, 104, 1, false);
 
-  epaper_draw_icon(132, 108, ICON_BT, !bt_on);
+  epaper_draw_icon(132, 100, ICON_BT, !bt_on);
   snprintf(buf, sizeof(buf), "%s", bt_on ? "ON" : "OFF");
-  epaper_draw_text_ext(buf, 154, 112, 1, false);
+  epaper_draw_text_ext(buf, 154, 104, 1, false);
 
-  // 6. Power Mode
 
-  const char *pwr_str = "BAL";
-  if (pwr_mode == 1)
-    pwr_str = "PERF";
-  snprintf(buf, sizeof(buf), "PWR: %s", pwr_str);
-  epaper_draw_text_ext(buf, 12, 140, 1, false);
 
   // 7. Time & Uptime (Centered at the bottom)
   time_t now;
@@ -493,11 +487,11 @@ void epaper_show_dashboard(const char *ssid, const char *ip, float voltage,
   }
 
   int time_len = strlen(time_str) * 8;
-  epaper_draw_text_ext(time_str, (EPD_WIDTH - time_len) / 2, 160, 1, false);
+  epaper_draw_text_ext(time_str, (EPD_WIDTH - time_len) / 2, 170, 1, false);
 
   snprintf(buf, sizeof(buf), "Uptime: %s", uptime_str ? uptime_str : "0m");
   int up_len = strlen(buf) * 8;
-  epaper_draw_text_ext(buf, (EPD_WIDTH - up_len) / 2, 172, 1, false);
+  epaper_draw_text_ext(buf, (EPD_WIDTH - up_len) / 2, 182, 1, false);
 
   // Send everything to hardware properly
   epaper_update_screen();

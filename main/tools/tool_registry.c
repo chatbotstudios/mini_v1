@@ -181,7 +181,7 @@ esp_err_t tool_registry_init(void) {
   register_tool(&dc);
   */
 
-  /* Register sense */
+  /* Register sense (DISABLED for AMOLED migration to prevent I2C conflicts)
   mimi_tool_t s = {
       .name = "sense",
       .description = "Activate the SHTC3 physical hardware to read ambient "
@@ -190,6 +190,7 @@ esp_err_t tool_registry_init(void) {
       .execute = tool_sense_execute,
   };
   register_tool(&s);
+  */
 
   /* Register run_cli */
   mimi_tool_t cli = {

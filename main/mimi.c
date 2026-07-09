@@ -24,7 +24,7 @@
 #include "hardware/battery.h"
 #include "hardware/bluetooth_utils.h"
 #include "hardware/buttons.h"
-#include "hardware/epaper.h"
+#include "hardware/display.h"
 #include "hardware/led.h"
 #include "hardware/rules_engine.h"
 #include "hardware/pm_system.h"
@@ -110,18 +110,20 @@ static void outbound_dispatch_task(void *arg) {
 }
 
 void mimi_update_dashboard(bool thinking, bool force_redraw) {
-  static shtc3_data_t s_cached_sd = {0};
-  static int64_t s_last_read_ms = 0;
+  // static shtc3_data_t s_cached_sd = {0};
+  // static int64_t s_last_read_ms = 0;
   int64_t now_ms = esp_timer_get_time() / 1000;
 
   /* Only read sensor every 30 seconds to save power/clutter */
+  /*
   if (now_ms - s_last_read_ms > 30000 || s_last_read_ms == 0) {
     if (shtc3_read(&s_cached_sd) == ESP_OK) {
       s_last_read_ms = now_ms;
     }
   }
+  */
 
-  shtc3_data_t sd = s_cached_sd;
+  shtc3_data_t sd = {0}; // s_cached_sd;
 
   char ssid_db[32] = {0};
   nvs_handle_t nvs_db;
@@ -135,8 +137,9 @@ void mimi_update_dashboard(bool thinking, bool force_redraw) {
   agent_metrics_get_uptime_str(up_db, sizeof(up_db));
 
   static int64_t s_last_epaper_refresh = 0;
+  // AMOLED doesn't need to skip frames like ePaper, but we still throttle
   if (force_redraw || now_ms - s_last_epaper_refresh > 60000 || s_last_epaper_refresh == 0) {
-      epaper_show_dashboard(
+      display_update_dashboard(
           (ssid_db[0] && strcmp(ssid_db, "N/A") != 0) ? ssid_db
                                                        : MIMI_SECRET_WIFI_SSID,
           wifi_manager_is_connected() ? wifi_manager_get_ip() : "0.0.0.0",
@@ -158,10 +161,12 @@ void execute_button_action(int action_id) {
     }
 
     shtc3_data_t sd = {0};
+    /*
     esp_err_t err = shtc3_read(&sd);
     if (err != ESP_OK) {
       ESP_LOGE(TAG, "Failed to read SHTC3 sensor: %s", esp_err_to_name(err));
     }
+    */
 
     char up_db[32];
     agent_metrics_get_uptime_str(up_db, sizeof(up_db));
@@ -268,14 +273,14 @@ void app_main(void) {
   ESP_ERROR_CHECK(esp_event_loop_create_default());
   ESP_ERROR_CHECK(init_spiffs());
 
-  ESP_ERROR_CHECK(epaper_init());
+  ESP_ERROR_CHECK(display_init());
 
   /* Try to mount SD Card */
   esp_err_t sd_err = sd_card_init();
   if (sd_err != ESP_OK) {
     ESP_LOGW(TAG, "SD Card not available.");
   }
-  ESP_ERROR_CHECK(shtc3_init());
+  // ESP_ERROR_CHECK(shtc3_init()); // Disabled for AMOLED migration
   ESP_ERROR_CHECK(buttons_init());
   ESP_ERROR_CHECK(battery_init());
   ESP_ERROR_CHECK(led_init());

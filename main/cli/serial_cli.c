@@ -4,7 +4,7 @@
 #include "driver/i2c_master.h"
 #include "hardware/battery.h"
 #include "hardware/bluetooth_utils.h"
-#include "hardware/epaper.h"
+#include "hardware/display.h"
 #include "hardware/network_utils.h"
 #include "hardware/led.h"
 #include "hardware/pm_system.h"
@@ -399,23 +399,8 @@ static int cmd_df(int argc, char **argv) {
 }
 
 static int cmd_epaper_dump(int argc, char **argv) {
-  uint8_t *buf = epaper_get_buffer();
-  if (!buf) {
-    printf("ePaper not initialized.\n");
-    return 1;
-  }
-  size_t out_len = 0;
-  size_t b64_size = ((5000 + 2) / 3) * 4 + 1;
-  char *b64 = malloc(b64_size);
-  if (!b64)
-    return 1;
-  mbedtls_base64_encode((unsigned char *)b64, b64_size, &out_len, buf, 5000);
-  b64[out_len] = '\0';
-  printf("---FRAME_START---\n");
-  printf("%s\n", b64);
-  printf("---FRAME_END---\n");
-  free(b64);
-  return 0;
+    printf("ePaper not supported on this hardware.\n");
+    return 0;
 }
 
 static int cmd_i2c_scan(int argc, char **argv) {
@@ -851,8 +836,7 @@ static int cmd_help(int argc, char **argv) {
 
   printf("\033[1;33m[ 🛠️ HARDWARE ]\033[0m\n");
   printf("  \033[1;36msense_raw\033[0m        Read SHTC3 I2C registers\n");
-  printf("  \033[1;36mepaper_refresh\033[0m   Full screen hardware reset\n");
-  printf("  \033[1;36mepaper_invert\033[0m    Toggle UI contrast (0/1)\n");
+
   printf("  \033[1;36mi2c_scan\033[0m         Find devices on the bus\n");
   printf("  \033[1;36mcolor\033[0m            Set LED by name or #hex (ex: color purple -t 5)\n");
   printf("  \033[1;36mled\033[0m              Set LED by name (red, green, blue...)\n");
@@ -1059,20 +1043,12 @@ static int cmd_sense_raw(int argc, char **argv) {
 }
 
 static int cmd_epaper_refresh(int argc, char **argv) {
-  printf("Triggering full ePaper refresh...\n");
-  epaper_full_refresh();
-  printf("Refresh complete\n");
+  printf("Refresh not supported on AMOLED\n");
   return 0;
 }
 
 static int cmd_epaper_invert(int argc, char **argv) {
-  if (argc < 2) {
-    printf("Usage: epaper_invert <0|1>\n");
-    return 1;
-  }
-  bool inv = atoi(argv[1]);
-  epaper_set_invert(inv);
-  printf("ePaper inversion set to %s\n", inv ? "ON" : "OFF");
+  printf("Invert not supported on AMOLED\n");
   return 0;
 }
 

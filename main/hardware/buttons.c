@@ -5,7 +5,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
-#include "hardware/epaper.h"
+#include "hardware/display.h"
 #include "hardware/shtc3.h"
 #include "telegram/telegram_bot.h"
 

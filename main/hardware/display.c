@@ -59,6 +59,29 @@ static lv_obj_t *s_welcome_msg_label = NULL;
 
 // Hardcoded fallback removed by user request
 
+#include <stdio.h>
+
+static bool is_valid_image(const char *path) {
+    const char *vfs_path = path;
+    if (strncmp(path, "S:", 2) == 0) {
+        vfs_path = path + 2;
+    }
+    FILE *f = fopen(vfs_path, "rb");
+    if (!f) return false;
+    uint8_t buf[8];
+    bool valid = false;
+    if (fread(buf, 1, 8, f) >= 2) {
+        if (buf[0] == 0xFF && buf[1] == 0xD8) {
+            valid = true; // JPEG
+        } else if (buf[0] == 0x89 && buf[1] == 0x50 && buf[2] == 0x4E && buf[3] == 0x47 &&
+                   buf[4] == 0x0D && buf[5] == 0x0A && buf[6] == 0x1A && buf[7] == 0x0A) {
+            valid = true; // PNG
+        }
+    }
+    fclose(f);
+    return valid;
+}
+
 #define MAX_WELCOME_MSGS 50
 static char *s_dynamic_messages[MAX_WELCOME_MSGS] = {0};
 static size_t s_dynamic_msg_count = 0;
@@ -81,7 +104,7 @@ esp_err_t ui_load_welcome_messages(void) {
         }
     }
     fclose(f);
-    ESP_LOGI(TAG, "Loaded %d welcome messages from SD Card", (int)s_dynamic_msg_count);
+    ESP_LOGI(TAG, "Loaded %d welcome messages from SPIFFS", (int)s_dynamic_msg_count);
     ui_show_random_welcome();
     return ESP_OK;
 }
@@ -163,8 +186,11 @@ static void ui_set_random_background(void)
     int count = 0;
     struct dirent *ent;
     while ((ent = readdir(dir)) != NULL && count < 20) {
+        if (ent->d_name[0] == '.') continue; // Skip hidden/AppleDouble files
+        
         if (strstr(ent->d_name, ".jpg") || strstr(ent->d_name, ".jpeg") ||
-            strstr(ent->d_name, ".JPG") || strstr(ent->d_name, ".JPEG")) {
+            strstr(ent->d_name, ".JPG") || strstr(ent->d_name, ".JPEG") ||
+            strstr(ent->d_name, ".png") || strstr(ent->d_name, ".PNG")) {
             files[count++] = strdup(ent->d_name);
         }
     }
@@ -172,9 +198,14 @@ static void ui_set_random_background(void)
 
     if (count > 0) {
         int idx = rand() % count;
-        char path[128];
+        static char path[128];
         snprintf(path, sizeof(path), "S:/sdcard/backgrounds/offline/%s", files[idx]);
         ESP_LOGI(TAG, "Loading background: %s", path);
+
+        if (!is_valid_image(path)) {
+            ESP_LOGW(TAG, "Skipping invalid Image: %s", path);
+            return;
+        }
 
         if (!s_offline_bg_img) {
             s_offline_bg_img = lv_image_create(s_offline_screen);
@@ -278,9 +309,6 @@ void ui_show_random_welcome(void)
         }
     }
     
-    // Also load a new background!
-    ui_set_random_background();
-
     bsp_display_unlock();
 }
 
@@ -500,19 +528,26 @@ static void scan_gallery_dir(const char *dir_path) {
     while ((ent = readdir(dir)) != NULL && s_gallery_count < MAX_GALLERY_IMAGES) {
         if (ent->d_name[0] == '.') continue; // Skip hidden/parent dirs
 
-        char fullpath[512];
-        snprintf(fullpath, sizeof(fullpath), "%s/%s", dir_path, ent->d_name);
+        char *fullpath = malloc(512);
+        if (!fullpath) continue;
+        
+        snprintf(fullpath, 512, "%s/%s", dir_path, ent->d_name);
         
         struct stat st;
         if (stat(fullpath, &st) == 0) {
             if (S_ISDIR(st.st_mode)) {
                 scan_gallery_dir(fullpath);
+                free(fullpath);
             } else {
                 if (strstr(ent->d_name, ".jpg") || strstr(ent->d_name, ".jpeg") ||
-                    strstr(ent->d_name, ".JPG") || strstr(ent->d_name, ".JPEG")) {
+                    strstr(ent->d_name, ".JPG") || strstr(ent->d_name, ".JPEG") ||
+                    strstr(ent->d_name, ".png") || strstr(ent->d_name, ".PNG")) {
                     s_gallery_paths[s_gallery_count++] = strdup(fullpath);
                 }
+                free(fullpath);
             }
+        } else {
+            free(fullpath);
         }
     }
     closedir(dir);
@@ -524,9 +559,16 @@ static void ui_gallery_show_image(int index) {
     if (index >= s_gallery_count) index = 0;
     s_gallery_index = index;
 
-    char path[128];
+    static char path[128];
     snprintf(path, sizeof(path), "S:%s", s_gallery_paths[s_gallery_index]);
     ESP_LOGI(TAG, "Gallery Image [%d/%d]: %s", s_gallery_index + 1, s_gallery_count, path);
+
+    if (!is_valid_image(path)) {
+        ESP_LOGW(TAG, "Skipping invalid Image: %s", path);
+        // Show next valid image instead of staying black
+        lv_image_set_src(s_dashboard_bg_img, NULL);
+        return;
+    }
 
     if (!s_dashboard_bg_img) {
         s_dashboard_bg_img = lv_image_create(s_dashboard_screen);

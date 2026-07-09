@@ -278,12 +278,16 @@ void app_main(void) {
   ESP_ERROR_CHECK(display_init());
 
   /* Try to mount SD Card */
-  /*
   esp_err_t sd_err = sd_card_init();
   if (sd_err != ESP_OK) {
     ESP_LOGW(TAG, "SD Card not available.");
+  } else {
+    // Now that SD is mounted, load files!
+    ui_load_welcome_messages();
   }
-  */
+
+  xTaskCreate(ui_task, "ui_task", 4096, NULL, 5, NULL);
+
   // ESP_ERROR_CHECK(shtc3_init()); // Disabled for AMOLED migration
   ESP_ERROR_CHECK(buttons_init());
   ESP_ERROR_CHECK(battery_init());

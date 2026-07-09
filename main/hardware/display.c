@@ -2,244 +2,748 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/timers.h"
 #include "lvgl.h"
 #include "bsp/esp-bsp.h"
 #include "bsp/display.h"
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <stdlib.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include "esp_random.h"
+#include <errno.h>
+#include "wifi/wifi_manager.h"
+#include "hardware/battery.h"
+#include "hardware/shtc3.h"
+#include "hardware/pm_system.h"
+#include "agent/agent_metrics.h"
 
 static const char *TAG = "display";
 
+/* Fonts (declared in fonts/ or via LVGL font converter) */
 LV_FONT_DECLARE(inter_16);
 LV_FONT_DECLARE(inter_24);
 LV_FONT_DECLARE(inter_48);
 
-static lv_obj_t *s_label_wifi;
-static lv_obj_t *s_label_ip;
-static lv_obj_t *s_label_batt;
-static lv_obj_t *s_label_temp;
-static lv_obj_t *s_label_hum;
-static lv_obj_t *s_label_bt;
-static lv_obj_t *s_label_time;
-static lv_obj_t *s_label_uptime;
-static lv_obj_t *s_arc_batt;
+/* Screen objects */
 static lv_obj_t *s_splash_screen = NULL;
+static lv_obj_t *s_offline_screen = NULL;
+static lv_obj_t *s_offline_bg_img = NULL;
+static lv_obj_t *s_dashboard_screen = NULL;
+static lv_obj_t *s_dashboard_bg_img = NULL;
+static ui_screen_t s_current_screen = UI_SCREEN_SPLASH;
+static bool s_is_thinking = false;
 
-static void splash_click_cb(lv_event_t * e);
+/* Gallery State */
+#define MAX_GALLERY_IMAGES 200
+static char *s_gallery_paths[MAX_GALLERY_IMAGES] = {0};
+static int s_gallery_count = 0;
+static int s_gallery_index = 0;
+static lv_obj_t *s_batt_overlay = NULL;
+static lv_timer_t *s_batt_timer = NULL;
 
-static void create_dashboard_ui(void) {
-    bsp_display_lock(0);
+/* Dashboard UI elements */
+static lv_obj_t *s_label_wifi = NULL;
+static lv_obj_t *s_label_ip = NULL;
+static lv_obj_t *s_label_batt = NULL;
+static lv_obj_t *s_label_temp = NULL;
+static lv_obj_t *s_label_hum = NULL;
+static lv_obj_t *s_label_bt = NULL;
+static lv_obj_t *s_label_time = NULL;
+static lv_obj_t *s_label_uptime = NULL;
+static lv_obj_t *s_arc_batt = NULL;
+static lv_obj_t *s_welcome_msg_label = NULL;
 
-    lv_obj_t *scr = lv_scr_act();
-    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
-    lv_obj_set_style_text_color(scr, lv_color_white(), 0);
-    lv_obj_set_style_text_font(scr, &inter_24, 0);
 
-    /* Header */
-    lv_obj_t *label_title = lv_label_create(scr);
-    lv_label_set_text(label_title, "MIMI");
-    lv_obj_set_style_text_font(label_title, &inter_48, 0);
-    lv_obj_set_style_text_color(label_title, lv_color_hex(0x00FFCC), 0);
-    lv_obj_align(label_title, LV_ALIGN_TOP_MID, 0, 10);
+// Hardcoded fallback removed by user request
 
-    /* WiFi Info */
-    s_label_wifi = lv_label_create(scr);
-    lv_label_set_text(s_label_wifi, LV_SYMBOL_WIFI " OFFLINE");
-    lv_obj_align(s_label_wifi, LV_ALIGN_TOP_LEFT, 10, 80);
+#define MAX_WELCOME_MSGS 50
+static char *s_dynamic_messages[MAX_WELCOME_MSGS] = {0};
+static size_t s_dynamic_msg_count = 0;
 
-    s_label_ip = lv_label_create(scr);
-    lv_label_set_text(s_label_ip, "IP: N/A");
-    lv_obj_align(s_label_ip, LV_ALIGN_TOP_LEFT, 10, 110);
+esp_err_t ui_load_welcome_messages(void) {
+    ESP_LOGI(TAG, "Attempting to open /spiffs/messages/welcome.txt...");
+    FILE *f = fopen("/spiffs/messages/welcome.txt", "r");
+    if (!f) {
+        ESP_LOGE(TAG, "Failed to open welcome.txt on SPIFFS!");
+        // We log the error code using errno
+        ESP_LOGE(TAG, "fopen errno: %s", strerror(errno));
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "Successfully opened /spiffs/messages/welcome.txt. Parsing lines...");
+    char line[256];
+    while (fgets(line, sizeof(line), f) && s_dynamic_msg_count < MAX_WELCOME_MSGS) {
+        line[strcspn(line, "\r\n")] = 0; // trim newline
+        if (strlen(line) > 0) {
+            s_dynamic_messages[s_dynamic_msg_count++] = strdup(line);
+        }
+    }
+    fclose(f);
+    ESP_LOGI(TAG, "Loaded %d welcome messages from SD Card", (int)s_dynamic_msg_count);
+    ui_show_random_welcome();
+    return ESP_OK;
+}
 
-    /* Battery Info */
-    s_label_batt = lv_label_create(scr);
-    lv_label_set_text(s_label_batt, LV_SYMBOL_BATTERY_EMPTY " 0% (0.00V)");
-    lv_obj_align(s_label_batt, LV_ALIGN_TOP_LEFT, 10, 150);
+/* Forward declarations */
+static void create_splash_screen(void);
+static void create_offline_screen(void);
+static void create_dashboard_screen(void);
+static void ui_gallery_enter(void);
+static void splash_lv_timer_cb(lv_timer_t *timer);
+static void splash_click_cb(lv_event_t *e);
+static void offline_tap_cb(lv_event_t *e);
+static void screen_gesture_cb(lv_event_t *e);
+static void dashboard_click_cb(lv_event_t *e);
+static void ui_gallery_show_image(int index);
 
-    s_arc_batt = lv_arc_create(scr);
-    lv_obj_set_size(s_arc_batt, 80, 80);
-    lv_arc_set_rotation(s_arc_batt, 270);
-    lv_arc_set_bg_angles(s_arc_batt, 0, 360);
-    lv_obj_align(s_arc_batt, LV_ALIGN_TOP_RIGHT, -20, 80);
+/* ==================== PUBLIC API ==================== */
 
-    /* Sensors */
-    s_label_temp = lv_label_create(scr);
-    lv_label_set_text(s_label_temp, "Temp: N/A");
-    lv_obj_align(s_label_temp, LV_ALIGN_TOP_LEFT, 10, 190);
+esp_err_t display_init(void)
+{
+    ESP_LOGI(TAG, "Initializing AMOLED + LVGL display (BSP)...");
 
-    s_label_hum = lv_label_create(scr);
-    lv_label_set_text(s_label_hum, "Hum: N/A");
-    lv_obj_align(s_label_hum, LV_ALIGN_TOP_LEFT, 10, 220);
+    bsp_display_cfg_t cfg = {
+        .lv_adapter_cfg = ESP_LV_ADAPTER_DEFAULT_CONFIG(),
+        .rotation = ESP_LV_ADAPTER_ROTATE_0,
+        .tear_avoid_mode = ESP_LV_ADAPTER_TEAR_AVOID_MODE_NONE,
+        .touch_flags = {
+            .swap_xy = 0,
+            .mirror_x = 1,
+            .mirror_y = 1}
+    };
+    cfg.lv_adapter_cfg.task_stack_size = 16 * 1024; // Increase stack for TJPGD decoding
+    bsp_display_start_with_config(&cfg);
+    bsp_display_backlight_on();
 
-    /* Connectivity */
-    s_label_bt = lv_label_create(scr);
-    lv_label_set_text(s_label_bt, LV_SYMBOL_BLUETOOTH " OFF");
-    lv_obj_align(s_label_bt, LV_ALIGN_TOP_LEFT, 10, 260);
+    /* Seed random for welcome messages */
+    srand(esp_random());
 
-    /* Bottom Status */
-    s_label_time = lv_label_create(scr);
-    lv_label_set_text(s_label_time, "00:00");
-    lv_obj_set_style_text_font(s_label_time, &inter_48, 0);
-    lv_obj_align(s_label_time, LV_ALIGN_BOTTOM_MID, 0, -50);
-
-    s_label_uptime = lv_label_create(scr);
-    lv_label_set_text(s_label_uptime, "Uptime: 0m");
-    lv_obj_set_style_text_font(s_label_uptime, &inter_16, 0);
-    lv_obj_set_style_text_color(s_label_uptime, lv_color_hex(0xAAAAAA), 0);
-    lv_obj_align(s_label_uptime, LV_ALIGN_BOTTOM_MID, 0, -10);
-
-    /* Splash Screen Overlay */
-    s_splash_screen = lv_obj_create(lv_layer_top());
-    lv_obj_remove_style_all(s_splash_screen); /* Remove default padding, border, and radius */
-    lv_obj_set_size(s_splash_screen, 466, 466);
-    lv_obj_set_style_bg_color(s_splash_screen, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(s_splash_screen, LV_OPA_COVER, 0);
+    bsp_display_lock(portMAX_DELAY);
     
-    lv_obj_t *splash_title = lv_label_create(s_splash_screen);
-    lv_label_set_text(splash_title, "MIMI");
-    lv_obj_set_style_text_font(splash_title, &inter_48, 0);
-    lv_obj_set_style_text_color(splash_title, lv_color_hex(0xFF0055), 0);
-    lv_obj_align(splash_title, LV_ALIGN_CENTER, 0, -40);
+    /* Create all screens */
+    create_splash_screen();
+    create_offline_screen();
+    create_dashboard_screen();
 
-    lv_obj_t *splash_sub = lv_label_create(s_splash_screen);
-    lv_label_set_text(splash_sub, "Gemini AI Agent");
-    lv_obj_set_style_text_font(splash_sub, &inter_24, 0);
-    lv_obj_set_style_text_color(splash_sub, lv_color_white(), 0);
-    lv_obj_align(splash_sub, LV_ALIGN_CENTER, 0, 20);
+    /* Start on splash */
+    s_current_screen = UI_SCREEN_SPLASH;
+    lv_scr_load(s_splash_screen);
 
-    lv_obj_add_flag(s_splash_screen, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(s_splash_screen, splash_click_cb, LV_EVENT_CLICKED, NULL);
+    /* Auto transition from splash after 4 seconds using LVGL timer */
+    lv_timer_create(splash_lv_timer_cb, 4000, NULL);
+    
+    bsp_display_unlock();
+
+    ESP_LOGI(TAG, "Multi-screen UI initialized successfully.");
+    return ESP_OK;
+}
+
+static void ui_bg_opa_anim_cb(void * var, int32_t v)
+{
+    lv_obj_set_style_image_opa((lv_obj_t *)var, v, 0);
+}
+
+static void ui_set_random_background(void)
+{
+    if (!s_offline_screen) return;
+    
+    // Ensure directory exists
+    mkdir("/sdcard/backgrounds", 0777);
+    mkdir("/sdcard/backgrounds/offline", 0777);
+
+    DIR *dir = opendir("/sdcard/backgrounds/offline");
+    if (!dir) {
+        ESP_LOGD(TAG, "No background directory found on SD card");
+        return;
+    }
+
+    char *files[20];
+    int count = 0;
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL && count < 20) {
+        if (strstr(ent->d_name, ".jpg") || strstr(ent->d_name, ".jpeg") ||
+            strstr(ent->d_name, ".JPG") || strstr(ent->d_name, ".JPEG")) {
+            files[count++] = strdup(ent->d_name);
+        }
+    }
+    closedir(dir);
+
+    if (count > 0) {
+        int idx = rand() % count;
+        char path[128];
+        snprintf(path, sizeof(path), "S:/sdcard/backgrounds/offline/%s", files[idx]);
+        ESP_LOGI(TAG, "Loading background: %s", path);
+
+        if (!s_offline_bg_img) {
+            s_offline_bg_img = lv_image_create(s_offline_screen);
+            // Move to the back so it sits behind text
+            lv_obj_move_to_index(s_offline_bg_img, 0);
+            lv_obj_center(s_offline_bg_img);
+        }
+        
+        // Start fading in
+        lv_obj_set_style_image_opa(s_offline_bg_img, 0, 0);
+        lv_image_set_src(s_offline_bg_img, path);
+        
+        lv_anim_t a;
+        lv_anim_init(&a);
+        lv_anim_set_var(&a, s_offline_bg_img);
+        lv_anim_set_exec_cb(&a, ui_bg_opa_anim_cb);
+        lv_anim_set_values(&a, 0, 255);
+        lv_anim_set_time(&a, 500);
+        lv_anim_start(&a);
+
+        for (int i = 0; i < count; i++) {
+            free(files[i]);
+        }
+    } else {
+        if (s_offline_bg_img) {
+            lv_obj_del(s_offline_bg_img);
+            s_offline_bg_img = NULL;
+        }
+    }
+}
+
+void ui_switch_to_screen_anim(ui_screen_t screen, lv_scr_load_anim_t anim_type)
+{
+    if (screen >= UI_SCREEN_COUNT) return;
+
+    bsp_display_lock(portMAX_DELAY);
+
+    // Memory optimization: unload background images when leaving screens
+    if (s_current_screen == UI_SCREEN_OFFLINE && screen != UI_SCREEN_OFFLINE) {
+        if (s_offline_bg_img) {
+            lv_obj_del(s_offline_bg_img);
+            s_offline_bg_img = NULL;
+        }
+    } else if (screen == UI_SCREEN_OFFLINE && s_current_screen != UI_SCREEN_OFFLINE) {
+        ui_set_random_background();
+    }
+    
+    if (s_current_screen == UI_SCREEN_DASHBOARD && screen != UI_SCREEN_DASHBOARD) {
+        // Free gallery image memory when leaving gallery
+        if (s_dashboard_bg_img) {
+            lv_obj_del(s_dashboard_bg_img);
+            s_dashboard_bg_img = NULL;
+        }
+        if (s_batt_overlay) {
+            lv_obj_del(s_batt_overlay);
+            s_batt_overlay = NULL;
+        }
+    } else if (screen == UI_SCREEN_DASHBOARD && s_current_screen != UI_SCREEN_DASHBOARD) {
+        ui_gallery_enter();
+    }
+
+    lv_obj_t *target = NULL;
+    switch (screen) {
+        case UI_SCREEN_SPLASH:   target = s_splash_screen; break;
+        case UI_SCREEN_OFFLINE:  target = s_offline_screen; break;
+        case UI_SCREEN_DASHBOARD: target = s_dashboard_screen; break;
+        default: break;
+    }
+
+    if (target) {
+        lv_scr_load_anim(target, anim_type, 300, 0, false);
+        s_current_screen = screen;
+        ESP_LOGI(TAG, "Switched to screen %d", screen);
+    }
 
     bsp_display_unlock();
 }
 
-static void splash_click_cb(lv_event_t * e)
+void ui_switch_to_screen(ui_screen_t screen)
 {
-    lv_obj_t * splash = lv_event_get_target(e);
-    lv_obj_del(splash);
-    s_splash_screen = NULL;
-    ESP_LOGI(TAG, "Splash screen dismissed by touch");
+    ui_switch_to_screen_anim(screen, LV_SCR_LOAD_ANIM_FADE_ON);
 }
 
-esp_err_t display_init(void) {
-    ESP_LOGI(TAG, "Initializing AMOLED display and LVGL...");
+ui_screen_t ui_get_current_screen(void)
+{
+    return s_current_screen;
+}
 
-    /* Start the display. This configures QSPI, LVGL, and touch */
-    bsp_display_start();
+void ui_show_random_welcome(void)
+{
+    if (!s_offline_screen) return;
 
-    /* Backlight is managed by BSP, generally we can turn it on */
-    bsp_display_backlight_on();
+    bsp_display_lock(portMAX_DELAY);
 
-    /* Create UI */
-    create_dashboard_ui();
+    if (s_welcome_msg_label) {
+        if (s_dynamic_msg_count > 0) {
+            int idx = rand() % s_dynamic_msg_count;
+            lv_label_set_text(s_welcome_msg_label, s_dynamic_messages[idx]);
+        } else {
+            lv_label_set_text(s_welcome_msg_label, "SPIFFS Error:\nwelcome.txt not found");
+        }
+    }
+    
+    // Also load a new background!
+    ui_set_random_background();
 
-    ESP_LOGI(TAG, "Display initialized successfully.");
-    return ESP_OK;
+    bsp_display_unlock();
+}
+
+void ui_update_wifi_status(bool connected, const char *ip)
+{
+    if (!s_label_wifi || !s_label_ip) return;
+
+    bsp_display_lock(portMAX_DELAY);
+
+    char buf[64];
+    if (connected && ip) {
+        snprintf(buf, sizeof(buf), LV_SYMBOL_WIFI " %s", "CONNECTED");
+        lv_label_set_text(s_label_wifi, buf);
+        snprintf(buf, sizeof(buf), "IP: %s", ip);
+        lv_label_set_text(s_label_ip, buf);
+    } else {
+        lv_label_set_text(s_label_wifi, LV_SYMBOL_WIFI " OFFLINE");
+        lv_label_set_text(s_label_ip, "IP: N/A");
+    }
+
+    bsp_display_unlock();
 }
 
 void display_update_dashboard(const char *ssid, const char *ip, float voltage,
                               int batt_pct, float temp, float hum, bool bt_on,
-                              int pwr_mode, const char *uptime_str, bool thinking) {
-    bsp_display_lock(0);
+                              int pwr_mode, const char *uptime_str, bool thinking)
+{
+    bsp_display_lock(portMAX_DELAY);
 
-    if (s_splash_screen) {
+    /* If splash is still visible, remove it */
+    if (s_splash_screen && lv_obj_is_valid(s_splash_screen)) {
         lv_obj_del(s_splash_screen);
         s_splash_screen = NULL;
     }
 
-    char buf[64];
+    s_is_thinking = thinking;
+
+    char buf[80];
 
     /* WiFi */
-    bool has_wifi = ssid && strcmp(ssid, "N/A") != 0;
+    bool has_wifi = ssid && strcmp(ssid, "N/A") != 0 && strcmp(ssid, "") != 0;
     snprintf(buf, sizeof(buf), "%s %s", LV_SYMBOL_WIFI, has_wifi ? ssid : "OFFLINE");
-    lv_label_set_text(s_label_wifi, buf);
+    if (s_label_wifi) lv_label_set_text(s_label_wifi, buf);
+
     snprintf(buf, sizeof(buf), "IP: %s", ip ? ip : "N/A");
-    lv_label_set_text(s_label_ip, buf);
+    if (s_label_ip) lv_label_set_text(s_label_ip, buf);
 
     /* Battery */
-    const char *batt_icon = LV_SYMBOL_BATTERY_FULL;
-    if (batt_pct <= 25) batt_icon = LV_SYMBOL_BATTERY_1;
-    else if (batt_pct <= 50) batt_icon = LV_SYMBOL_BATTERY_2;
-    else if (batt_pct <= 75) batt_icon = LV_SYMBOL_BATTERY_3;
-    else if (batt_pct <= 5) batt_icon = LV_SYMBOL_BATTERY_EMPTY;
-    
-    snprintf(buf, sizeof(buf), "%s %d%% (%.2fV)", batt_icon, batt_pct, voltage);
-    lv_label_set_text(s_label_batt, buf);
-    
-    lv_arc_set_value(s_arc_batt, batt_pct);
+    if (s_label_batt && s_arc_batt) {
+        const char *batt_icon = LV_SYMBOL_BATTERY_FULL;
+        if (batt_pct <= 10) batt_icon = LV_SYMBOL_BATTERY_EMPTY;
+        else if (batt_pct <= 30) batt_icon = LV_SYMBOL_BATTERY_1;
+        else if (batt_pct <= 60) batt_icon = LV_SYMBOL_BATTERY_2;
+        else if (batt_pct <= 85) batt_icon = LV_SYMBOL_BATTERY_3;
 
-    /* Sensors */
-    if (temp != 0.0f) {
-        snprintf(buf, sizeof(buf), "Temp: %.1f C", temp);
+        snprintf(buf, sizeof(buf), "%s %d%% (%.2fV)", batt_icon, batt_pct, voltage);
+        lv_label_set_text(s_label_batt, buf);
+        lv_arc_set_value(s_arc_batt, batt_pct);
+    }
+
+    /* Sensors with emojis removed to avoid missing glyph boxes */
+    if (s_label_temp && temp > -100.0f) {
+        snprintf(buf, sizeof(buf), "T: %.1fC", temp);
         lv_label_set_text(s_label_temp, buf);
     }
-    if (hum != 0.0f) {
-        snprintf(buf, sizeof(buf), "Hum: %.1f %%", hum);
+    if (s_label_hum && hum > 0) {
+        snprintf(buf, sizeof(buf), "H: %.0f%%", hum);
         lv_label_set_text(s_label_hum, buf);
     }
 
-    /* BT */
-    snprintf(buf, sizeof(buf), "%s %s", LV_SYMBOL_BLUETOOTH, bt_on ? "ON" : "OFF");
-    lv_label_set_text(s_label_bt, buf);
-
-    /* Time & Uptime */
-    time_t now;
-    struct tm timeinfo;
-    time(&now);
-    localtime_r(&now, &timeinfo);
-    if (timeinfo.tm_year > (2020 - 1900)) {
-        strftime(buf, sizeof(buf), "%H:%M  %d.%m.%y", &timeinfo);
-        lv_label_set_text(s_label_time, buf);
+    /* Bluetooth */
+    if (s_label_bt) {
+        snprintf(buf, sizeof(buf), "%s %s", LV_SYMBOL_BLUETOOTH, bt_on ? "ON" : "OFF");
+        lv_label_set_text(s_label_bt, buf);
     }
 
-    snprintf(buf, sizeof(buf), "Uptime: %s", uptime_str ? uptime_str : "0m");
-    lv_label_set_text(s_label_uptime, buf);
+    /* Time & Uptime */
+    if (s_label_time) lv_label_set_text(s_label_time, uptime_str ? uptime_str : "??:??");
+    if (s_label_uptime) lv_label_set_text(s_label_uptime, uptime_str ? uptime_str : "Uptime: --");
 
     bsp_display_unlock();
 }
 
 static lv_obj_t *s_msg_overlay = NULL;
+static lv_obj_t *s_msg_label = NULL;
 
-static void msg_click_cb(lv_event_t * e) {
-    if (s_msg_overlay) {
-        lv_obj_del(s_msg_overlay);
-        s_msg_overlay = NULL;
+void display_show_message(const char *msg)
+{
+    bsp_display_lock(portMAX_DELAY);
+
+    if (!s_msg_overlay) {
+        s_msg_overlay = lv_obj_create(lv_layer_top());
+        lv_obj_remove_style_all(s_msg_overlay);
+        lv_obj_set_size(s_msg_overlay, 466, 466);
+        lv_obj_set_style_bg_color(s_msg_overlay, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(s_msg_overlay, LV_OPA_80, 0);
+
+        lv_obj_t *box = lv_obj_create(s_msg_overlay);
+        lv_obj_set_size(box, 400, 300);
+        lv_obj_align(box, LV_ALIGN_CENTER, 0, 0);
+        lv_obj_set_style_bg_color(box, lv_color_black(), 0);
+        lv_obj_set_style_border_color(box, lv_color_hex(0x00FFCC), 0);
+        lv_obj_set_style_border_width(box, 4, 0);
+        lv_obj_set_style_radius(box, 20, 0);
+
+        s_msg_label = lv_label_create(box);
+        lv_obj_set_width(s_msg_label, 360);
+        lv_label_set_long_mode(s_msg_label, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_font(s_msg_label, &inter_24, 0);
+        lv_obj_set_style_text_color(s_msg_label, lv_color_white(), 0);
+        lv_obj_align(s_msg_label, LV_ALIGN_CENTER, 0, 0);
     }
+    lv_label_set_text(s_msg_label, msg);
+
+    bsp_display_unlock();
 }
 
-void display_clear_message(void) {
-    bsp_display_lock(0);
+void display_clear_message(void)
+{
+    bsp_display_lock(portMAX_DELAY);
     if (s_msg_overlay) {
         lv_obj_del(s_msg_overlay);
         s_msg_overlay = NULL;
+        s_msg_label = NULL;
     }
     bsp_display_unlock();
 }
 
-void display_show_message(const char *msg) {
-    bsp_display_lock(0);
-    if (s_msg_overlay) {
-        lv_obj_del(s_msg_overlay);
+/* ==================== SCREEN CREATION ==================== */
+
+static void create_splash_screen(void)
+{
+    s_splash_screen = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_splash_screen, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_splash_screen, LV_OPA_COVER, 0);
+
+    /* Big title */
+    lv_obj_t *title = lv_label_create(s_splash_screen);
+    lv_label_set_text(title, "MIMI");
+    lv_obj_set_style_text_font(title, &inter_48, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0x00FFCC), 0);
+    lv_obj_align(title, LV_ALIGN_CENTER, 0, -60);
+
+    /* Subtitle */
+    lv_obj_t *subtitle = lv_label_create(s_splash_screen);
+    lv_label_set_text(subtitle, "Gemini AI Agent");
+    lv_obj_set_style_text_font(subtitle, &inter_24, 0);
+    lv_obj_set_style_text_color(subtitle, lv_color_white(), 0);
+    lv_obj_align(subtitle, LV_ALIGN_CENTER, 0, 0);
+
+    /* Tagline */
+    lv_obj_t *tag = lv_label_create(s_splash_screen);
+    lv_label_set_text(tag, "Touch to continue  •  Swipe for more");
+    lv_obj_set_style_text_font(tag, &inter_16, 0);
+    lv_obj_set_style_text_color(tag, lv_color_hex(0x888888), 0);
+    lv_obj_align(tag, LV_ALIGN_CENTER, 0, 50);
+
+    /* Make splash clickable to skip */
+    lv_obj_add_flag(s_splash_screen, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_splash_screen, splash_click_cb, LV_EVENT_CLICKED, NULL);
+}
+
+static void create_offline_screen(void)
+{
+    s_offline_screen = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_offline_screen, lv_color_hex(0x1a1a2e), 0);
+
+    /* Title */
+    lv_obj_t *title = lv_label_create(s_offline_screen);
+    lv_label_set_text(title, "OFFLINE MODE");
+    lv_obj_set_style_text_font(title, &inter_24, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0x00FFCC), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 30);
+
+    /* Big random welcome message */
+    s_welcome_msg_label = lv_label_create(s_offline_screen);
+    if (s_dynamic_msg_count > 0) {
+        lv_label_set_text(s_welcome_msg_label, s_dynamic_messages[0]);
+    } else {
+        lv_label_set_text(s_welcome_msg_label, "SPIFFS Error:\nwelcome.txt not found");
+    }
+    lv_obj_set_style_text_font(s_welcome_msg_label, &inter_24, 0);
+    lv_obj_set_style_text_color(s_welcome_msg_label, lv_color_white(), 0);
+    lv_obj_set_style_text_align(s_welcome_msg_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(s_welcome_msg_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(s_welcome_msg_label, 380);
+    lv_obj_align(s_welcome_msg_label, LV_ALIGN_CENTER, 0, -20);
+
+    /* Hint */
+    lv_obj_t *hint = lv_label_create(s_offline_screen);
+    lv_label_set_text(hint, "Tap anywhere to refresh message  •  Swipe → Dashboard");
+    lv_obj_set_style_text_font(hint, &inter_16, 0);
+    lv_obj_set_style_text_color(hint, lv_color_hex(0xAAAAAA), 0);
+    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -30);
+
+    /* Tap anywhere on screen to get new random message */
+    lv_obj_add_flag(s_offline_screen, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_offline_screen, offline_tap_cb, LV_EVENT_CLICKED, NULL);
+
+    /* Gesture Support */
+    lv_obj_add_event_cb(s_offline_screen, screen_gesture_cb, LV_EVENT_GESTURE, NULL);
+}
+
+static void create_dashboard_screen(void)
+{
+    s_dashboard_screen = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_dashboard_screen, lv_color_black(), 0);
+    lv_obj_add_event_cb(s_dashboard_screen, screen_gesture_cb, LV_EVENT_GESTURE, NULL);
+    lv_obj_add_event_cb(s_dashboard_screen, dashboard_click_cb, LV_EVENT_CLICKED, NULL);
+}
+
+static void scan_gallery_dir(const char *dir_path) {
+    DIR *dir = opendir(dir_path);
+    if (!dir) return;
+
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL && s_gallery_count < MAX_GALLERY_IMAGES) {
+        if (ent->d_name[0] == '.') continue; // Skip hidden/parent dirs
+
+        char fullpath[512];
+        snprintf(fullpath, sizeof(fullpath), "%s/%s", dir_path, ent->d_name);
+        
+        struct stat st;
+        if (stat(fullpath, &st) == 0) {
+            if (S_ISDIR(st.st_mode)) {
+                scan_gallery_dir(fullpath);
+            } else {
+                if (strstr(ent->d_name, ".jpg") || strstr(ent->d_name, ".jpeg") ||
+                    strstr(ent->d_name, ".JPG") || strstr(ent->d_name, ".JPEG")) {
+                    s_gallery_paths[s_gallery_count++] = strdup(fullpath);
+                }
+            }
+        }
+    }
+    closedir(dir);
+}
+
+static void ui_gallery_show_image(int index) {
+    if (s_gallery_count == 0) return;
+    if (index < 0) index = s_gallery_count - 1;
+    if (index >= s_gallery_count) index = 0;
+    s_gallery_index = index;
+
+    char path[128];
+    snprintf(path, sizeof(path), "S:%s", s_gallery_paths[s_gallery_index]);
+    ESP_LOGI(TAG, "Gallery Image [%d/%d]: %s", s_gallery_index + 1, s_gallery_count, path);
+
+    if (!s_dashboard_bg_img) {
+        s_dashboard_bg_img = lv_image_create(s_dashboard_screen);
+        lv_obj_move_to_index(s_dashboard_bg_img, 0);
+        lv_obj_center(s_dashboard_bg_img);
     }
     
-    s_msg_overlay = lv_obj_create(lv_layer_top());
-    lv_obj_set_size(s_msg_overlay, LV_PCT(90), LV_PCT(80));
-    lv_obj_align(s_msg_overlay, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(s_msg_overlay, lv_color_hex(0x222222), 0);
-    lv_obj_set_style_border_color(s_msg_overlay, lv_color_hex(0x00FF00), 0);
-    lv_obj_set_style_border_width(s_msg_overlay, 4, 0);
+    // Smooth crossfade
+    lv_obj_set_style_image_opa(s_dashboard_bg_img, 0, 0);
+    lv_image_set_src(s_dashboard_bg_img, path);
     
-    lv_obj_t *label = lv_label_create(s_msg_overlay);
-    lv_label_set_text(label, msg);
-    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(label, LV_PCT(100));
-    lv_obj_set_style_text_font(label, &inter_24, 0);
-    lv_obj_set_style_text_color(label, lv_color_white(), 0);
-    lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_dashboard_bg_img);
+    lv_anim_set_exec_cb(&a, ui_bg_opa_anim_cb);
+    lv_anim_set_values(&a, 0, 255);
+    lv_anim_set_time(&a, 300);
+    lv_anim_start(&a);
+}
 
-    lv_obj_add_flag(s_msg_overlay, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(s_msg_overlay, msg_click_cb, LV_EVENT_CLICKED, NULL);
+static void ui_gallery_enter(void)
+{
+    if (s_gallery_count == 0) {
+        ESP_LOGI(TAG, "Scanning SD card for JPEGs...");
+        scan_gallery_dir("/sdcard");
+        ESP_LOGI(TAG, "Found %d JPEGs.", s_gallery_count);
+    }
     
-    bsp_display_unlock();
+    if (s_gallery_count > 0) {
+        ui_gallery_show_image(s_gallery_index);
+    } else {
+        lv_obj_t *fallback = lv_label_create(s_dashboard_screen);
+        lv_label_set_text(fallback, "No JPEGs found on SD Card!");
+        lv_obj_set_style_text_color(fallback, lv_color_white(), 0);
+        lv_obj_align(fallback, LV_ALIGN_CENTER, 0, 0);
+    }
+}
+
+/* ==================== CALLBACKS ==================== */
+
+static void splash_lv_timer_cb(lv_timer_t *timer)
+{
+    if (s_splash_screen && lv_obj_is_valid(s_splash_screen) && s_current_screen == UI_SCREEN_SPLASH) {
+        ui_switch_to_screen(UI_SCREEN_OFFLINE);
+        ui_show_random_welcome();
+    }
+    /* LVGL timer repeats by default, so we delete it once it fires */
+    lv_timer_delete(timer);
+}
+
+static void splash_click_cb(lv_event_t *e)
+{
+    if (s_splash_screen && lv_obj_is_valid(s_splash_screen)) {
+        ui_switch_to_screen(UI_SCREEN_OFFLINE);
+        ui_show_random_welcome();
+    }
+}
+
+
+
+
+static void offline_tap_cb(lv_event_t *e)
+{
+    ui_show_random_welcome();
+}
+
+static void screen_gesture_cb(lv_event_t *e)
+{
+    lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_active());
+    
+    if (s_current_screen == UI_SCREEN_OFFLINE) {
+        if (dir == LV_DIR_LEFT) {
+            ui_switch_to_screen_anim(UI_SCREEN_DASHBOARD, LV_SCR_LOAD_ANIM_MOVE_LEFT);
+        }
+    } else if (s_current_screen == UI_SCREEN_DASHBOARD) {
+        if (dir == LV_DIR_BOTTOM) {
+            ui_switch_to_screen_anim(UI_SCREEN_OFFLINE, LV_SCR_LOAD_ANIM_MOVE_BOTTOM);
+        } else if (dir == LV_DIR_LEFT) {
+            ui_gallery_show_image(s_gallery_index + 1);
+        } else if (dir == LV_DIR_RIGHT) {
+            ui_gallery_show_image(s_gallery_index - 1);
+        }
+    }
+}
+
+static void batt_overlay_timer_cb(lv_timer_t *timer) {
+    if (s_batt_overlay) {
+        lv_obj_del(s_batt_overlay);
+        s_batt_overlay = NULL;
+    }
+    lv_timer_pause(timer);
+}
+
+static void dashboard_click_cb(lv_event_t *e) {
+    if (s_batt_overlay) {
+        lv_timer_reset(s_batt_timer);
+        return;
+    }
+    
+    s_batt_overlay = lv_obj_create(s_dashboard_screen);
+    lv_obj_set_size(s_batt_overlay, 250, 150);
+    lv_obj_align(s_batt_overlay, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(s_batt_overlay, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_batt_overlay, 180, 0); // Semi-transparent
+    lv_obj_set_style_border_width(s_batt_overlay, 0, 0);
+    
+    lv_obj_t *lbl = lv_label_create(s_batt_overlay);
+    int pct = battery_get_percentage();
+    float v = battery_get_voltage();
+    lv_label_set_text_fmt(lbl, "Battery\n%d%%\n%.2f V", pct, v);
+    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_font(lbl, &inter_24, 0);
+    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(lbl);
+    
+    if (!s_batt_timer) {
+        s_batt_timer = lv_timer_create(batt_overlay_timer_cb, 3000, NULL);
+    }
+    lv_timer_resume(s_batt_timer);
+    lv_timer_reset(s_batt_timer);
+}
+
+/* Simple periodic UI task (call from app_main or a dedicated task) */
+/* Integration Note: Create this task with 4096 stack size and priority 5:
+   xTaskCreate(ui_task, "ui_task", 4096, NULL, 5, NULL); */
+void ui_task(void *arg)
+{
+    static int tick = 0;
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        tick++;
+
+        /* 1. Update Clock (Every second) */
+        time_t now;
+        struct tm timeinfo;
+        time(&now);
+        localtime_r(&now, &timeinfo);
+        
+        char time_str[16];
+        if (timeinfo.tm_year > (2020 - 1900)) {
+            strftime(time_str, sizeof(time_str), "%H:%M", &timeinfo);
+        } else {
+            strcpy(time_str, "--:--");
+        }
+
+        /* Fetch hardware data OUTSIDE the LVGL lock */
+        bool do_hardware_poll = (tick % 10 == 0);
+        bool wifi_conn = false;
+        const char *ip = "0.0.0.0";
+        int batt_pct = 0;
+        float voltage = 0.0f;
+        shtc3_data_t sd = {0};
+        bool shtc3_ok = false;
+        char up_str[32] = {0};
+
+        agent_metrics_get_uptime_str(up_str, sizeof(up_str));
+
+        if (do_hardware_poll) {
+            wifi_conn = wifi_manager_is_connected();
+            ip = wifi_conn ? wifi_manager_get_ip() : "0.0.0.0";
+            batt_pct = battery_get_percentage();
+            voltage = battery_get_voltage();
+            shtc3_ok = (shtc3_read(&sd) == ESP_OK);
+        }
+
+        bsp_display_lock(portMAX_DELAY);
+
+        if (s_current_screen == UI_SCREEN_DASHBOARD) {
+            /* Update Time & Thinking indicator */
+            if (s_label_time) {
+                if (s_is_thinking && (tick % 2 == 0)) {
+                    char buf[32];
+                    snprintf(buf, sizeof(buf), "%s " LV_SYMBOL_EYE_OPEN, time_str);
+                    lv_label_set_text(s_label_time, buf);
+                } else {
+                    lv_label_set_text(s_label_time, time_str);
+                }
+            }
+
+            /* Update uptime (Every second) */
+            if (s_label_uptime) {
+                lv_label_set_text(s_label_uptime, up_str);
+            }
+
+            /* Refresh Wi-Fi / Sensors (Every 10 seconds to save I2C/SPI overhead) */
+            if (do_hardware_poll) {
+                char buf[64];
+                snprintf(buf, sizeof(buf), "%s %s", LV_SYMBOL_WIFI, wifi_conn ? "CONNECTED" : "OFFLINE");
+                if (s_label_wifi) lv_label_set_text(s_label_wifi, buf);
+                snprintf(buf, sizeof(buf), "IP: %s", ip);
+                if (s_label_ip) lv_label_set_text(s_label_ip, buf);
+
+                if (s_label_batt && s_arc_batt) {
+                    const char *batt_icon = LV_SYMBOL_BATTERY_FULL;
+                    if (batt_pct <= 10) batt_icon = LV_SYMBOL_BATTERY_EMPTY;
+                    else if (batt_pct <= 30) batt_icon = LV_SYMBOL_BATTERY_1;
+                    else if (batt_pct <= 60) batt_icon = LV_SYMBOL_BATTERY_2;
+                    else if (batt_pct <= 85) batt_icon = LV_SYMBOL_BATTERY_3;
+                    snprintf(buf, sizeof(buf), "%s %d%% (%.2fV)", batt_icon, batt_pct, voltage);
+                    lv_label_set_text(s_label_batt, buf);
+                    lv_arc_set_value(s_arc_batt, batt_pct);
+                }
+
+                if (shtc3_ok) {
+                    if (s_label_temp) {
+                        snprintf(buf, sizeof(buf), "T: %.1fC", sd.temperature);
+                        lv_label_set_text(s_label_temp, buf);
+                    }
+                    if (s_label_hum) {
+                        snprintf(buf, sizeof(buf), "H: %.0f%%", sd.humidity);
+                        lv_label_set_text(s_label_hum, buf);
+                    }
+                } else {
+                    ESP_LOGD(TAG, "Failed to read SHTC3 sensor");
+                }
+            }
+        }
+        bsp_display_unlock();
+    }
 }

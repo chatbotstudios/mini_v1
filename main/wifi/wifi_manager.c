@@ -8,6 +8,8 @@
 #include "nvs_flash.h"
 #include <inttypes.h>
 #include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/timers.h"
 
 static const char *TAG = "wifi";
 
@@ -15,6 +17,13 @@ static EventGroupHandle_t s_wifi_event_group;
 static int s_retry_count = 0;
 static char s_ip_str[16] = "0.0.0.0";
 static bool s_connected = false;
+static TimerHandle_t s_wifi_retry_timer = NULL;
+
+static void wifi_retry_timer_cb(TimerHandle_t xTimer) {
+    ESP_LOGI(TAG, "10-minute Wi-Fi retry timer expired. Attempting reconnect...");
+    s_retry_count = 0; // Reset counter for a fresh burst
+    esp_wifi_connect();
+}
 
 static const char *wifi_reason_to_str(wifi_err_reason_t reason) {
   switch (reason) {
@@ -71,14 +80,17 @@ static void event_handler(void *arg, esp_event_base_t event_base,
       s_retry_count++;
     } else {
       if (disc) {
-        ESP_LOGE(TAG, "Failed to connect (reason=%d:%s) after %d retries",
+        ESP_LOGE(TAG, "Failed to connect (reason=%d:%s) after %d retries. Starting 10-minute polling.",
                  disc->reason, wifi_reason_to_str(disc->reason),
                  MIMI_WIFI_MAX_RETRY);
       } else {
-        ESP_LOGE(TAG, "Failed to connect after %d retries",
+        ESP_LOGE(TAG, "Failed to connect after %d retries. Starting 10-minute polling.",
                  MIMI_WIFI_MAX_RETRY);
       }
       xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+      if (s_wifi_retry_timer) {
+          xTimerStart(s_wifi_retry_timer, 0);
+      }
     }
   } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
     ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
@@ -87,12 +99,17 @@ static void event_handler(void *arg, esp_event_base_t event_base,
     s_retry_count = 0;
     s_connected = true;
 
+    if (s_wifi_retry_timer) {
+        xTimerStop(s_wifi_retry_timer, 0);
+    }
+
     xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
   }
 }
 
 esp_err_t wifi_manager_init(void) {
   s_wifi_event_group = xEventGroupCreate();
+  s_wifi_retry_timer = xTimerCreate("wifi_retry", pdMS_TO_TICKS(600000), pdFALSE, NULL, wifi_retry_timer_cb);
 
   ESP_ERROR_CHECK(esp_netif_init());
   esp_netif_create_default_wifi_sta();

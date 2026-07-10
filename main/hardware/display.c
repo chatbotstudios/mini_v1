@@ -29,10 +29,14 @@ LV_FONT_DECLARE(inter_48);
 
 /* Screen objects */
 static lv_obj_t *s_splash_screen = NULL;
+static lv_obj_t *s_home_screen = NULL;
 static lv_obj_t *s_offline_screen = NULL;
 static lv_obj_t *s_offline_bg_img = NULL;
 static lv_obj_t *s_dashboard_screen = NULL;
 static lv_obj_t *s_dashboard_bg_img = NULL;
+
+static lv_obj_t *s_page_indicator_container = NULL;
+static lv_obj_t *s_page_dots[3] = {NULL};
 static ui_screen_t s_current_screen = UI_SCREEN_SPLASH;
 static bool s_is_thinking = false;
 
@@ -111,11 +115,16 @@ esp_err_t ui_load_welcome_messages(void) {
 
 /* Forward declarations */
 static void create_splash_screen(void);
+static void create_home_screen(void);
+static void create_page_indicator(void);
 static void create_offline_screen(void);
 static void create_dashboard_screen(void);
 static void ui_gallery_enter(void);
+static void ui_set_random_background(void);
+
 static void splash_lv_timer_cb(lv_timer_t *timer);
 static void splash_click_cb(lv_event_t *e);
+static void home_icon_click_cb(lv_event_t *e);
 static void offline_tap_cb(lv_event_t *e);
 static void screen_gesture_cb(lv_event_t *e);
 static void dashboard_click_cb(lv_event_t *e);
@@ -147,8 +156,10 @@ esp_err_t display_init(void)
     
     /* Create all screens */
     create_splash_screen();
+    create_home_screen();
     create_offline_screen();
     create_dashboard_screen();
+    create_page_indicator();
 
     /* Start on splash */
     s_current_screen = UI_SCREEN_SPLASH;
@@ -237,6 +248,33 @@ static void ui_set_random_background(void)
     }
 }
 
+void ui_update_page_indicator(ui_screen_t screen) {
+    if (screen == UI_SCREEN_SPLASH || screen >= UI_SCREEN_COUNT || !s_page_indicator_container) {
+        if (s_page_indicator_container) {
+            lv_obj_add_flag(s_page_indicator_container, LV_OBJ_FLAG_HIDDEN);
+        }
+        return;
+    }
+    
+    lv_obj_clear_flag(s_page_indicator_container, LV_OBJ_FLAG_HIDDEN);
+    
+    int active_idx = -1;
+    if (screen == UI_SCREEN_OFFLINE) active_idx = 0;
+    else if (screen == UI_SCREEN_HOME) active_idx = 1;
+    else if (screen == UI_SCREEN_DASHBOARD) active_idx = 2;
+    
+    for (int i = 0; i < 3; i++) {
+        if (!s_page_dots[i]) continue;
+        if (i == active_idx) {
+            lv_obj_set_style_bg_opa(s_page_dots[i], 255, 0);
+            lv_obj_set_width(s_page_dots[i], 16);
+        } else {
+            lv_obj_set_style_bg_opa(s_page_dots[i], 100, 0);
+            lv_obj_set_width(s_page_dots[i], 8);
+        }
+    }
+}
+
 void ui_switch_to_screen_anim(ui_screen_t screen, lv_scr_load_anim_t anim_type)
 {
     if (screen >= UI_SCREEN_COUNT) return;
@@ -270,6 +308,7 @@ void ui_switch_to_screen_anim(ui_screen_t screen, lv_scr_load_anim_t anim_type)
     lv_obj_t *target = NULL;
     switch (screen) {
         case UI_SCREEN_SPLASH:   target = s_splash_screen; break;
+        case UI_SCREEN_HOME:     target = s_home_screen; break;
         case UI_SCREEN_OFFLINE:  target = s_offline_screen; break;
         case UI_SCREEN_DASHBOARD: target = s_dashboard_screen; break;
         default: break;
@@ -278,6 +317,7 @@ void ui_switch_to_screen_anim(ui_screen_t screen, lv_scr_load_anim_t anim_type)
     if (target) {
         lv_scr_load_anim(target, anim_type, 300, 0, false);
         s_current_screen = screen;
+        ui_update_page_indicator(screen);
         ESP_LOGI(TAG, "Switched to screen %d", screen);
     }
 
@@ -471,6 +511,61 @@ static void create_splash_screen(void)
     lv_obj_add_event_cb(s_splash_screen, splash_click_cb, LV_EVENT_CLICKED, NULL);
 }
 
+static void create_page_indicator(void) {
+    s_page_indicator_container = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(s_page_indicator_container, 100, 20);
+    lv_obj_align(s_page_indicator_container, LV_ALIGN_BOTTOM_MID, 0, -20);
+    lv_obj_set_style_bg_opa(s_page_indicator_container, 0, 0); 
+    lv_obj_set_style_border_width(s_page_indicator_container, 0, 0);
+    lv_obj_set_flex_flow(s_page_indicator_container, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(s_page_indicator_container, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(s_page_indicator_container, 8, 0);
+    
+    for (int i = 0; i < 3; i++) {
+        s_page_dots[i] = lv_obj_create(s_page_indicator_container);
+        lv_obj_set_size(s_page_dots[i], 8, 8);
+        lv_obj_set_style_radius(s_page_dots[i], LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(s_page_dots[i], lv_color_white(), 0);
+        lv_obj_set_style_border_width(s_page_dots[i], 0, 0);
+        lv_obj_set_style_bg_opa(s_page_dots[i], 100, 0);
+    }
+    
+    lv_obj_add_flag(s_page_indicator_container, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void create_home_screen(void)
+{
+    s_home_screen = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_home_screen, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_home_screen, LV_OPA_COVER, 0);
+    
+    lv_obj_t *chat_icon = lv_image_create(s_home_screen);
+    lv_image_set_src(chat_icon, "S:/spiffs/icons/chat_icon.png");
+    lv_obj_align(chat_icon, LV_ALIGN_CENTER, -60, -20);
+    lv_obj_add_flag(chat_icon, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(chat_icon, home_icon_click_cb, LV_EVENT_CLICKED, (void*)UI_SCREEN_OFFLINE);
+
+    lv_obj_t *chat_label = lv_label_create(s_home_screen);
+    lv_label_set_text(chat_label, "Chat");
+    lv_obj_set_style_text_font(chat_label, &inter_16, 0);
+    lv_obj_set_style_text_color(chat_label, lv_color_white(), 0);
+    lv_obj_align_to(chat_label, chat_icon, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
+
+    lv_obj_t *gallery_icon = lv_image_create(s_home_screen);
+    lv_image_set_src(gallery_icon, "S:/spiffs/icons/gallery_icon.png");
+    lv_obj_align(gallery_icon, LV_ALIGN_CENTER, 60, -20);
+    lv_obj_add_flag(gallery_icon, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(gallery_icon, home_icon_click_cb, LV_EVENT_CLICKED, (void*)UI_SCREEN_DASHBOARD);
+    
+    lv_obj_t *gallery_label = lv_label_create(s_home_screen);
+    lv_label_set_text(gallery_label, "Gallery");
+    lv_obj_set_style_text_font(gallery_label, &inter_16, 0);
+    lv_obj_set_style_text_color(gallery_label, lv_color_white(), 0);
+    lv_obj_align_to(gallery_label, gallery_icon, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
+    
+    lv_obj_add_event_cb(s_home_screen, screen_gesture_cb, LV_EVENT_GESTURE, NULL);
+}
+
 static void create_offline_screen(void)
 {
     s_offline_screen = lv_obj_create(NULL);
@@ -611,24 +706,27 @@ static void ui_gallery_enter(void)
 
 static void splash_lv_timer_cb(lv_timer_t *timer)
 {
-    if (s_splash_screen && lv_obj_is_valid(s_splash_screen) && s_current_screen == UI_SCREEN_SPLASH) {
-        ui_switch_to_screen(UI_SCREEN_OFFLINE);
-        ui_show_random_welcome();
+    if (s_current_screen == UI_SCREEN_SPLASH) {
+        ui_switch_to_screen_anim(UI_SCREEN_HOME, LV_SCR_LOAD_ANIM_FADE_ON);
     }
-    /* LVGL timer repeats by default, so we delete it once it fires */
-    lv_timer_delete(timer);
+    // Delete timer so it only fires once
+    lv_timer_del(timer);
 }
 
 static void splash_click_cb(lv_event_t *e)
 {
-    if (s_splash_screen && lv_obj_is_valid(s_splash_screen)) {
-        ui_switch_to_screen(UI_SCREEN_OFFLINE);
-        ui_show_random_welcome();
-    }
+    ui_switch_to_screen(UI_SCREEN_HOME);
 }
 
-
-
+static void home_icon_click_cb(lv_event_t *e)
+{
+    ui_screen_t target = (ui_screen_t)(uintptr_t)lv_event_get_user_data(e);
+    if (target == UI_SCREEN_OFFLINE) {
+        ui_switch_to_screen_anim(target, LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+    } else if (target == UI_SCREEN_DASHBOARD) {
+        ui_switch_to_screen_anim(target, LV_SCR_LOAD_ANIM_MOVE_LEFT);
+    }
+}
 
 static void offline_tap_cb(lv_event_t *e)
 {
@@ -639,17 +737,25 @@ static void screen_gesture_cb(lv_event_t *e)
 {
     lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_active());
     
-    if (s_current_screen == UI_SCREEN_OFFLINE) {
-        if (dir == LV_DIR_LEFT) {
+    if (s_current_screen == UI_SCREEN_HOME) {
+        if (dir == LV_DIR_RIGHT) {
+            ui_switch_to_screen_anim(UI_SCREEN_OFFLINE, LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+        } else if (dir == LV_DIR_LEFT) {
             ui_switch_to_screen_anim(UI_SCREEN_DASHBOARD, LV_SCR_LOAD_ANIM_MOVE_LEFT);
         }
+    } else if (s_current_screen == UI_SCREEN_OFFLINE) {
+        if (dir == LV_DIR_LEFT) {
+            ui_switch_to_screen_anim(UI_SCREEN_HOME, LV_SCR_LOAD_ANIM_MOVE_LEFT);
+        }
     } else if (s_current_screen == UI_SCREEN_DASHBOARD) {
-        if (dir == LV_DIR_BOTTOM) {
+        if (dir == LV_DIR_RIGHT) {
+            ui_switch_to_screen_anim(UI_SCREEN_HOME, LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+        } else if (dir == LV_DIR_BOTTOM) {
             ui_switch_to_screen_anim(UI_SCREEN_OFFLINE, LV_SCR_LOAD_ANIM_MOVE_BOTTOM);
         } else if (dir == LV_DIR_LEFT) {
             ui_gallery_show_image(s_gallery_index + 1);
-        } else if (dir == LV_DIR_RIGHT) {
-            ui_gallery_show_image(s_gallery_index - 1);
+        } else if (dir == LV_DIR_RIGHT) { // Note: RIGHT now goes to Home.
+            // handled above!
         }
     }
 }

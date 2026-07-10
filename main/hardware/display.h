@@ -11,6 +11,7 @@ extern "C" {
 
 typedef enum {
     UI_SCREEN_SPLASH = 0,
+    UI_SCREEN_HOME,
     UI_SCREEN_OFFLINE,
     UI_SCREEN_DASHBOARD,
     UI_SCREEN_COUNT
@@ -38,6 +39,9 @@ void ui_update_wifi_status(bool connected, const char *ip);
 
 /* Call this from main loop or a task to refresh dynamic elements */
 void ui_task(void *arg);
+
+/* Home Screen Page Indicator */
+void ui_update_page_indicator(ui_screen_t screen);
 
 #ifdef __cplusplus
 }

@@ -31,7 +31,6 @@ LV_FONT_DECLARE(inter_48);
 static lv_obj_t *s_splash_screen = NULL;
 static lv_obj_t *s_home_screen = NULL;
 static lv_obj_t *s_offline_screen = NULL;
-static lv_obj_t *s_offline_bg_img = NULL;
 static lv_obj_t *s_dashboard_screen = NULL;
 static lv_obj_t *s_filesystem_screen = NULL;
 
@@ -127,7 +126,6 @@ static void create_offline_screen(void);
 static void create_dashboard_screen(void);
 static void create_filesystem_screen(void);
 static void ui_gallery_enter(void);
-static void ui_set_random_background(void);
 static void load_directory(const char *path);
 static void fs_list_btn_cb(lv_event_t *e);
 
@@ -197,87 +195,6 @@ static void ui_bg_opa_anim_cb(void * var, int32_t v)
     lv_obj_set_style_image_opa((lv_obj_t *)var, v, 0);
 }
 
-static void set_random_bg_timer_cb(lv_timer_t *timer)
-{
-    if (!s_offline_screen) {
-        lv_timer_del(timer);
-        return;
-    }
-    
-    // Ensure directory exists
-    mkdir("/sdcard/backgrounds", 0777);
-    mkdir("/sdcard/backgrounds/offline", 0777);
-
-    DIR *dir = opendir("/sdcard/backgrounds/offline");
-    if (!dir) {
-        ESP_LOGD(TAG, "No background directory found on SD card");
-        return;
-    }
-
-    char *files[20];
-    int count = 0;
-    struct dirent *ent;
-    while ((ent = readdir(dir)) != NULL && count < 20) {
-        if (ent->d_name[0] == '.') continue; // Skip hidden/AppleDouble files
-        
-        if (strstr(ent->d_name, ".jpg") || strstr(ent->d_name, ".jpeg") ||
-            strstr(ent->d_name, ".JPG") || strstr(ent->d_name, ".JPEG") ||
-            strstr(ent->d_name, ".png") || strstr(ent->d_name, ".PNG")) {
-            files[count++] = strdup(ent->d_name);
-        }
-    }
-    closedir(dir);
-
-    if (count > 0) {
-        int idx = rand() % count;
-        static char path[128];
-        snprintf(path, sizeof(path), "S:/sdcard/backgrounds/offline/%s", files[idx]);
-        ESP_LOGI(TAG, "Loading background: %s", path);
-
-        if (!is_valid_image(path)) {
-            ESP_LOGW(TAG, "Skipping invalid Image: %s", path);
-            return;
-        }
-
-        if (!s_offline_bg_img) {
-            s_offline_bg_img = lv_image_create(s_offline_screen);
-            // Move to the back so it sits behind text
-            lv_obj_move_to_index(s_offline_bg_img, 0);
-            lv_obj_center(s_offline_bg_img);
-        }
-        
-        // Start fading in
-        lv_obj_set_style_image_opa(s_offline_bg_img, 0, 0);
-        lv_image_set_src(s_offline_bg_img, path);
-        
-        lv_anim_t a;
-        lv_anim_init(&a);
-        lv_anim_set_var(&a, s_offline_bg_img);
-        lv_anim_set_exec_cb(&a, ui_bg_opa_anim_cb);
-        lv_anim_set_values(&a, 0, 255);
-        lv_anim_set_time(&a, 500);
-        lv_anim_start(&a);
-
-        for (int i = 0; i < count; i++) {
-            free(files[i]);
-        }
-    } else {
-        ESP_LOGD(TAG, "No valid background images found");
-        if (s_offline_bg_img) {
-            lv_obj_del(s_offline_bg_img);
-            s_offline_bg_img = NULL;
-        }
-    }
-    lv_timer_del(timer);
-}
-
-static void ui_set_random_background(void)
-{
-    /* Delay SD Card operations by 400ms to allow LVGL screen transition to finish.
-       This prevents LCD DMA starvation of the SDMMC DMA! */
-    lv_timer_create(set_random_bg_timer_cb, 400, NULL);
-}
-
 void ui_update_page_indicator(ui_screen_t screen) {
     if (screen == UI_SCREEN_SPLASH || screen >= UI_SCREEN_COUNT || !s_page_indicator_container) {
         if (s_page_indicator_container) {
@@ -312,15 +229,6 @@ void ui_switch_to_screen_anim(ui_screen_t screen, lv_scr_load_anim_t anim_type)
     bsp_display_lock(portMAX_DELAY);
 
     // Memory optimization: unload background images when leaving screens
-    if (s_current_screen == UI_SCREEN_OFFLINE && screen != UI_SCREEN_OFFLINE) {
-        if (s_offline_bg_img) {
-            lv_obj_del(s_offline_bg_img);
-            s_offline_bg_img = NULL;
-        }
-    } else if (screen == UI_SCREEN_OFFLINE && s_current_screen != UI_SCREEN_OFFLINE) {
-        ui_set_random_background();
-    }
-    
     if (s_current_screen == UI_SCREEN_DASHBOARD && screen != UI_SCREEN_DASHBOARD) {
         // Free gallery image memory when leaving gallery
         if (s_dashboard_bg_img) {
@@ -718,7 +626,7 @@ static void create_home_screen(void)
 static void create_offline_screen(void)
 {
     s_offline_screen = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(s_offline_screen, lv_color_hex(0x1a1a2e), 0);
+    lv_obj_set_style_bg_color(s_offline_screen, lv_color_black(), 0);
 
     /* Title */
     lv_obj_t *title = lv_label_create(s_offline_screen);

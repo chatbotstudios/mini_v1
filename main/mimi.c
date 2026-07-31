@@ -321,10 +321,10 @@ void app_main(void) {
   ESP_ERROR_CHECK(serial_cli_init());
 
   /* Start WiFi */
-  pm_system_set_mode(MIMI_PWR_PERFORMANCE);
   led_set_state_color(MIMI_COLOR_CONNECTING); // Set Yellow (Connecting)
 
-  esp_err_t wifi_err = wifi_manager_start();
+  // TEMPORARY PROOF: Disable WiFi completely to stop RF scanning power draw!
+  esp_err_t wifi_err = ESP_FAIL; // wifi_manager_start();
   if (wifi_err == ESP_OK) {
     ESP_LOGI(TAG, "Waiting for WiFi connection...");
     if (wifi_manager_wait_connected(30000) == ESP_OK) {

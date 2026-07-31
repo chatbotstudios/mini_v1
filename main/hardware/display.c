@@ -731,6 +731,13 @@ static void ui_gallery_show_image(int index) {
     // Smooth crossfade
     lv_obj_set_style_image_opa(s_dashboard_bg_img, 0, 0);
     
+    // POWER WORKAROUND: The Waveshare AXP2101 PMU cannot sustain the concurrent
+    // load of AMOLED (100% brightness) + WiFi Scanning + SD Card SPI DMA.
+    // By dropping the AMOLED brightness during the read, we free up ~150mA
+    // and prevent the 3.3V rail from browning out the SD card!
+    bsp_display_brightness_set(10);
+    vTaskDelay(pdMS_TO_TICKS(50)); // Settle power rails
+
     FILE *f = fopen(path, "rb");
     if (f) {
         fseek(f, 0, SEEK_END);
@@ -758,6 +765,9 @@ static void ui_gallery_show_image(int index) {
         }
         fclose(f);
     }
+    
+    // Restore AMOLED brightness
+    bsp_display_brightness_set(100);
     
     // Resume LVGL drawing
     

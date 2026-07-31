@@ -323,8 +323,7 @@ void app_main(void) {
   /* Start WiFi */
   led_set_state_color(MIMI_COLOR_CONNECTING); // Set Yellow (Connecting)
 
-  // TEMPORARY PROOF: Disable WiFi completely to stop RF scanning power draw!
-  esp_err_t wifi_err = ESP_FAIL; // wifi_manager_start();
+  esp_err_t wifi_err = wifi_manager_start();
   if (wifi_err == ESP_OK) {
     ESP_LOGI(TAG, "Waiting for WiFi connection...");
     if (wifi_manager_wait_connected(30000) == ESP_OK) {

@@ -46,7 +46,6 @@ static char *s_gallery_paths[MAX_GALLERY_IMAGES] = {0};
 static int s_gallery_count = 0;
 static int s_gallery_index = 0;
 static lv_obj_t *s_batt_overlay = NULL;
-static lv_timer_t *s_batt_timer = NULL;
 
 /* Dashboard UI elements */
 static lv_obj_t *s_label_wifi = NULL;
@@ -127,7 +126,7 @@ static void splash_click_cb(lv_event_t *e);
 static void home_icon_click_cb(lv_event_t *e);
 static void offline_tap_cb(lv_event_t *e);
 static void screen_gesture_cb(lv_event_t *e);
-static void dashboard_click_cb(lv_event_t *e);
+static void scan_gallery_dir(const char *dir_path);
 static void ui_gallery_show_image(int index);
 
 /* ==================== PUBLIC API ==================== */
@@ -171,6 +170,13 @@ esp_err_t display_init(void)
     bsp_display_unlock();
 
     ESP_LOGI(TAG, "Multi-screen UI initialized successfully.");
+    
+    /* Pre-scan the SD card for JPEGs outside of the GUI task 
+       to prevent DMA bus starvation during screen transitions! */
+    ESP_LOGI(TAG, "Pre-scanning SD card for JPEGs to avoid DMA collisions...");
+    scan_gallery_dir("/sdcard");
+    ESP_LOGI(TAG, "Found %d JPEGs.", s_gallery_count);
+
     return ESP_OK;
 }
 
@@ -612,7 +618,6 @@ static void create_dashboard_screen(void)
     s_dashboard_screen = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(s_dashboard_screen, lv_color_black(), 0);
     lv_obj_add_event_cb(s_dashboard_screen, screen_gesture_cb, LV_EVENT_GESTURE, NULL);
-    lv_obj_add_event_cb(s_dashboard_screen, dashboard_click_cb, LV_EVENT_CLICKED, NULL);
 }
 
 static void scan_gallery_dir(const char *dir_path) {
@@ -690,12 +695,6 @@ static void ui_gallery_show_image(int index) {
 
 static void ui_gallery_enter(void)
 {
-    if (s_gallery_count == 0) {
-        ESP_LOGI(TAG, "Scanning SD card for JPEGs...");
-        scan_gallery_dir("/sdcard");
-        ESP_LOGI(TAG, "Found %d JPEGs.", s_gallery_count);
-    }
-    
     if (s_gallery_count > 0) {
         ui_gallery_show_image(s_gallery_index);
     } else {
@@ -752,53 +751,14 @@ static void screen_gesture_cb(lv_event_t *e)
             ui_switch_to_screen_anim(UI_SCREEN_HOME, LV_SCR_LOAD_ANIM_MOVE_LEFT);
         }
     } else if (s_current_screen == UI_SCREEN_DASHBOARD) {
-        if (dir == LV_DIR_RIGHT) {
-            ui_switch_to_screen_anim(UI_SCREEN_HOME, LV_SCR_LOAD_ANIM_MOVE_RIGHT);
-        } else if (dir == LV_DIR_BOTTOM) {
-            ui_switch_to_screen_anim(UI_SCREEN_OFFLINE, LV_SCR_LOAD_ANIM_MOVE_BOTTOM);
+        if (dir == LV_DIR_BOTTOM) {
+            ui_switch_to_screen_anim(UI_SCREEN_HOME, LV_SCR_LOAD_ANIM_MOVE_BOTTOM);
         } else if (dir == LV_DIR_LEFT) {
             ui_gallery_show_image(s_gallery_index + 1);
-        } else if (dir == LV_DIR_RIGHT) { // Note: RIGHT now goes to Home.
-            // handled above!
+        } else if (dir == LV_DIR_RIGHT) { 
+            ui_gallery_show_image(s_gallery_index - 1);
         }
     }
-}
-
-static void batt_overlay_timer_cb(lv_timer_t *timer) {
-    if (s_batt_overlay) {
-        lv_obj_del(s_batt_overlay);
-        s_batt_overlay = NULL;
-    }
-    lv_timer_pause(timer);
-}
-
-static void dashboard_click_cb(lv_event_t *e) {
-    if (s_batt_overlay) {
-        lv_timer_reset(s_batt_timer);
-        return;
-    }
-    
-    s_batt_overlay = lv_obj_create(s_dashboard_screen);
-    lv_obj_set_size(s_batt_overlay, 250, 150);
-    lv_obj_align(s_batt_overlay, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(s_batt_overlay, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(s_batt_overlay, 180, 0); // Semi-transparent
-    lv_obj_set_style_border_width(s_batt_overlay, 0, 0);
-    
-    lv_obj_t *lbl = lv_label_create(s_batt_overlay);
-    int pct = battery_get_percentage();
-    float v = battery_get_voltage();
-    lv_label_set_text_fmt(lbl, "Battery\n%d%%\n%.2f V", pct, v);
-    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
-    lv_obj_set_style_text_font(lbl, &inter_24, 0);
-    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_center(lbl);
-    
-    if (!s_batt_timer) {
-        s_batt_timer = lv_timer_create(batt_overlay_timer_cb, 3000, NULL);
-    }
-    lv_timer_resume(s_batt_timer);
-    lv_timer_reset(s_batt_timer);
 }
 
 /* Simple periodic UI task (call from app_main or a dedicated task) */

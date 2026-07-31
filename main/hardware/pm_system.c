@@ -37,13 +37,16 @@ esp_err_t pm_system_set_mode(mimi_pwr_mode_t mode) {
   }
 
   esp_err_t err = esp_pm_configure(&pm_config);
+  if (err == ESP_ERR_NOT_SUPPORTED) {
+      ESP_LOGW(TAG, "Power management is disabled in menuconfig, ignoring.");
+      s_current_mode = mode;
+      return ESP_OK;
+  }
   if (err == ESP_OK) {
     s_current_mode = mode;
   } else {
-    ESP_LOGE(TAG, "Failed to configure power management: %s",
-             esp_err_to_name(err));
+    ESP_LOGE(TAG, "Failed to configure power management: %s", esp_err_to_name(err));
   }
-
   return err;
 }
 

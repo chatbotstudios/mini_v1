@@ -31,8 +31,8 @@ esp_err_t sd_card_init(void) {
   ESP_LOGI(TAG, "Initializing SDMMC host");
 
   sdmmc_host_t host = SDMMC_HOST_DEFAULT();
-  /* Reduce frequency to 5MHz to improve signal integrity on 1-line SDMMC */
-  host.max_freq_khz = 5000;
+  /* Reduce frequency to 1MHz to survive massive voltage dips caused by Wi-Fi RF scanning */
+  host.max_freq_khz = 1000;
   /* Increase timeout to prevent 0x107 (ESP_ERR_TIMEOUT) when Wi-Fi heavily uses the bus */
   host.command_timeout_ms = 1500;
 

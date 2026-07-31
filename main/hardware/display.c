@@ -735,12 +735,17 @@ static void ui_gallery_show_image(int index) {
     snprintf(path, sizeof(path), "%s", s_gallery_paths[s_gallery_index]);
     ESP_LOGI(TAG, "Gallery Image [%d/%d]: %s", s_gallery_index + 1, s_gallery_count, path);
 
+    /* --- PSRAM Preloader --- */
+    // Pause LVGL drawing so DMA is free BEFORE any SD card reads
+    bsp_display_lock(0);
+
     if (!is_valid_image(path)) {
         ESP_LOGW(TAG, "Skipping invalid Image: %s", path);
         // Show next valid image instead of staying black
         if (s_dashboard_bg_img) {
             lv_image_set_src(s_dashboard_bg_img, NULL);
         }
+        bsp_display_unlock();
         return;
     }
 
@@ -752,10 +757,6 @@ static void ui_gallery_show_image(int index) {
     
     // Smooth crossfade
     lv_obj_set_style_image_opa(s_dashboard_bg_img, 0, 0);
-
-    /* --- PSRAM Preloader --- */
-    // Pause LVGL drawing so DMA is free
-    bsp_display_lock(0);
     
     FILE *f = fopen(path, "rb");
     if (f) {

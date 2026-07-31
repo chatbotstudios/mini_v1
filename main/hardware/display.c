@@ -628,22 +628,16 @@ static void scan_gallery_dir(const char *dir_path) {
         
         snprintf(fullpath, 512, "%s/%s", dir_path, ent->d_name);
         
-        struct stat st;
-        if (stat(fullpath, &st) == 0) {
-            if (S_ISDIR(st.st_mode)) {
-                scan_gallery_dir(fullpath);
-                free(fullpath);
-            } else {
-                if (strstr(ent->d_name, ".jpg") || strstr(ent->d_name, ".jpeg") ||
-                    strstr(ent->d_name, ".JPG") || strstr(ent->d_name, ".JPEG") ||
-                    strstr(ent->d_name, ".png") || strstr(ent->d_name, ".PNG")) {
-                    s_gallery_paths[s_gallery_count++] = strdup(fullpath);
-                }
-                free(fullpath);
-            }
+        if (ent->d_type == DT_DIR) {
+            scan_gallery_dir(fullpath);
         } else {
-            free(fullpath);
+            if (strstr(ent->d_name, ".jpg") || strstr(ent->d_name, ".jpeg") ||
+                strstr(ent->d_name, ".JPG") || strstr(ent->d_name, ".JPEG") ||
+                strstr(ent->d_name, ".png") || strstr(ent->d_name, ".PNG")) {
+                s_gallery_paths[s_gallery_count++] = strdup(fullpath);
+            }
         }
+        free(fullpath);
     }
     closedir(dir);
 }

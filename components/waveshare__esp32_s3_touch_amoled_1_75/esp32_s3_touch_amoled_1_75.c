@@ -164,7 +164,7 @@ esp_err_t bsp_sdcard_mount(void)
         .allocation_unit_size = 16 * 1024};
 
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
-    host.max_freq_khz = 10000; // Drop from 20MHz to 10MHz for stability against Wi-Fi power sags
+    host.max_freq_khz = 1000; // Drop to 1MHz for extreme stability against signal ringing
     const sdmmc_slot_config_t slot_config = {
         .clk = BSP_SD_CLK,
         .cmd = BSP_SD_CMD,

@@ -592,6 +592,7 @@ static void fs_list_btn_cb(lv_event_t *e) {
 static void create_filesystem_screen(void) {
     s_filesystem_screen = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(s_filesystem_screen, lv_color_hex(0x1a1a2e), 0);
+    lv_obj_set_style_bg_opa(s_filesystem_screen, LV_OPA_COVER, 0);
     
     // Title bar
     s_fs_title = lv_label_create(s_filesystem_screen);
@@ -882,6 +883,8 @@ static void home_icon_click_cb(lv_event_t *e)
         ui_switch_to_screen_anim(target, LV_SCR_LOAD_ANIM_MOVE_RIGHT);
     } else if (target == UI_SCREEN_DASHBOARD) {
         ui_switch_to_screen_anim(target, LV_SCR_LOAD_ANIM_MOVE_LEFT);
+    } else if (target == UI_SCREEN_FILESYSTEM) {
+        ui_switch_to_screen_anim(target, LV_SCR_LOAD_ANIM_MOVE_TOP);
     }
 }
 

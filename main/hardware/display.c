@@ -33,6 +33,14 @@ static lv_obj_t *s_home_screen = NULL;
 static lv_obj_t *s_offline_screen = NULL;
 static lv_obj_t *s_offline_bg_img = NULL;
 static lv_obj_t *s_dashboard_screen = NULL;
+static lv_obj_t *s_filesystem_screen = NULL;
+
+static lv_obj_t *s_welcome_msg_label = NULL;
+
+/* Filesystem UI variables */
+static lv_obj_t *s_fs_list = NULL;
+static lv_obj_t *s_fs_title = NULL;
+static char s_current_fs_path[256] = "/sdcard";
 static lv_obj_t *s_dashboard_bg_img = NULL;
 
 static lv_obj_t *s_page_indicator_container = NULL;
@@ -57,7 +65,6 @@ static lv_obj_t *s_label_bt = NULL;
 static lv_obj_t *s_label_time = NULL;
 static lv_obj_t *s_label_uptime = NULL;
 static lv_obj_t *s_arc_batt = NULL;
-static lv_obj_t *s_welcome_msg_label = NULL;
 
 
 // Hardcoded fallback removed by user request
@@ -118,8 +125,11 @@ static void create_home_screen(void);
 static void create_page_indicator(void);
 static void create_offline_screen(void);
 static void create_dashboard_screen(void);
+static void create_filesystem_screen(void);
 static void ui_gallery_enter(void);
 static void ui_set_random_background(void);
+static void load_directory(const char *path);
+static void fs_list_btn_cb(lv_event_t *e);
 
 static void splash_lv_timer_cb(lv_timer_t *timer);
 static void splash_click_cb(lv_event_t *e);
@@ -159,6 +169,7 @@ esp_err_t display_init(void)
     create_home_screen();
     create_offline_screen();
     create_dashboard_screen();
+    create_filesystem_screen();
     create_page_indicator();
 
     /* Start on splash */
@@ -323,6 +334,10 @@ void ui_switch_to_screen_anim(ui_screen_t screen, lv_scr_load_anim_t anim_type)
     } else if (screen == UI_SCREEN_DASHBOARD && s_current_screen != UI_SCREEN_DASHBOARD) {
         ui_gallery_enter();
     }
+    
+    if (screen == UI_SCREEN_FILESYSTEM && s_current_screen != UI_SCREEN_FILESYSTEM) {
+        load_directory("/sdcard");
+    }
 
     lv_obj_t *target = NULL;
     switch (screen) {
@@ -330,6 +345,7 @@ void ui_switch_to_screen_anim(ui_screen_t screen, lv_scr_load_anim_t anim_type)
         case UI_SCREEN_HOME:     target = s_home_screen; break;
         case UI_SCREEN_OFFLINE:  target = s_offline_screen; break;
         case UI_SCREEN_DASHBOARD: target = s_dashboard_screen; break;
+        case UI_SCREEN_FILESYSTEM: target = s_filesystem_screen; break;
         default: break;
     }
 
@@ -496,6 +512,104 @@ void display_clear_message(void)
     bsp_display_unlock();
 }
 
+/* ==================== FILESYSTEM VIEWER ==================== */
+
+static void load_directory(const char *path) {
+    if (!s_fs_list || !s_fs_title) return;
+    
+    // Update path label
+    lv_label_set_text(s_fs_title, path);
+    strncpy(s_current_fs_path, path, sizeof(s_current_fs_path)-1);
+    
+    // Clear list
+    lv_obj_clean(s_fs_list);
+    
+    DIR *dir = opendir(path);
+    if (!dir) {
+        lv_list_add_text(s_fs_list, "Error opening directory!");
+        return;
+    }
+    
+    // If not root, add ".." button
+    if (strcmp(path, "/sdcard") != 0 && strcmp(path, "/sdcard/") != 0) {
+        lv_obj_t *btn = lv_list_add_btn(s_fs_list, LV_SYMBOL_UP, " .. (Go Up)");
+        lv_obj_set_style_text_font(btn, &inter_24, 0);
+        lv_obj_add_event_cb(btn, fs_list_btn_cb, LV_EVENT_CLICKED, strdup(".."));
+    }
+    
+    struct dirent *ent;
+    int count = 0;
+    while ((ent = readdir(dir)) != NULL && count < 50) {
+        if (ent->d_name[0] == '.') continue;
+        
+        char *fullpath = malloc(512);
+        if (!fullpath) continue;
+        snprintf(fullpath, 512, "%s/%s", path, ent->d_name);
+        
+        bool is_dir = (ent->d_type == DT_DIR);
+        if (ent->d_type == DT_UNKNOWN) {
+            struct stat st;
+            if (stat(fullpath, &st) == 0) {
+                is_dir = S_ISDIR(st.st_mode);
+            }
+        }
+        
+        const char *icon = is_dir ? LV_SYMBOL_DIRECTORY : LV_SYMBOL_FILE;
+        lv_obj_t *btn = lv_list_add_btn(s_fs_list, icon, ent->d_name);
+        lv_obj_set_style_text_font(btn, &inter_24, 0);
+        lv_obj_add_event_cb(btn, fs_list_btn_cb, LV_EVENT_CLICKED, fullpath);
+        
+        count++;
+    }
+    closedir(dir);
+}
+
+static void fs_list_btn_cb(lv_event_t *e) {
+    char *path = (char *)lv_event_get_user_data(e);
+    if (!path) return;
+    
+    if (strcmp(path, "..") == 0) {
+        // Go up one directory
+        char *last_slash = strrchr(s_current_fs_path, '/');
+        if (last_slash && last_slash != s_current_fs_path) {
+            *last_slash = '\0';
+            load_directory(s_current_fs_path);
+        } else if (last_slash == s_current_fs_path) {
+            load_directory("/sdcard");
+        }
+    } else {
+        // Check if it's a directory
+        struct stat st;
+        if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
+            load_directory(path);
+        } else {
+            // It's a file, maybe show a popup?
+            ESP_LOGI(TAG, "Selected file: %s", path);
+        }
+    }
+}
+
+static void create_filesystem_screen(void) {
+    s_filesystem_screen = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_filesystem_screen, lv_color_hex(0x1a1a2e), 0);
+    
+    // Title bar
+    s_fs_title = lv_label_create(s_filesystem_screen);
+    lv_label_set_text(s_fs_title, "/sdcard");
+    lv_obj_set_style_text_font(s_fs_title, &inter_24, 0);
+    lv_obj_set_style_text_color(s_fs_title, lv_color_hex(0x00FFCC), 0);
+    lv_obj_align(s_fs_title, LV_ALIGN_TOP_MID, 0, 10);
+    
+    // File list
+    s_fs_list = lv_list_create(s_filesystem_screen);
+    lv_obj_set_size(s_fs_list, 440, 400);
+    lv_obj_align(s_fs_list, LV_ALIGN_BOTTOM_MID, 0, -10);
+    lv_obj_set_style_bg_color(s_fs_list, lv_color_hex(0x111111), 0);
+    lv_obj_set_style_border_color(s_fs_list, lv_color_hex(0x333333), 0);
+    
+    lv_obj_add_event_cb(s_filesystem_screen, screen_gesture_cb, LV_EVENT_GESTURE, NULL);
+}
+
 /* ==================== SCREEN CREATION ==================== */
 
 static void create_splash_screen(void)
@@ -558,9 +672,10 @@ static void create_home_screen(void)
     lv_obj_set_style_bg_color(s_home_screen, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(s_home_screen, LV_OPA_COVER, 0);
     
+    /* 1. Chat Icon (Left) */
     lv_obj_t *chat_icon = lv_image_create(s_home_screen);
     lv_image_set_src(chat_icon, "S:/spiffs/icons/chat_icon.png");
-    lv_obj_align(chat_icon, LV_ALIGN_CENTER, -60, -20);
+    lv_obj_align(chat_icon, LV_ALIGN_CENTER, -110, -20);
     lv_obj_add_flag(chat_icon, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(chat_icon, home_icon_click_cb, LV_EVENT_CLICKED, (void*)UI_SCREEN_OFFLINE);
 
@@ -570,9 +685,10 @@ static void create_home_screen(void)
     lv_obj_set_style_text_color(chat_label, lv_color_white(), 0);
     lv_obj_align_to(chat_label, chat_icon, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
 
+    /* 2. Gallery Icon (Center) */
     lv_obj_t *gallery_icon = lv_image_create(s_home_screen);
     lv_image_set_src(gallery_icon, "S:/spiffs/icons/gallery_icon.png");
-    lv_obj_align(gallery_icon, LV_ALIGN_CENTER, 60, -20);
+    lv_obj_align(gallery_icon, LV_ALIGN_CENTER, 0, -20);
     lv_obj_add_flag(gallery_icon, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(gallery_icon, home_icon_click_cb, LV_EVENT_CLICKED, (void*)UI_SCREEN_DASHBOARD);
     
@@ -581,6 +697,19 @@ static void create_home_screen(void)
     lv_obj_set_style_text_font(gallery_label, &inter_16, 0);
     lv_obj_set_style_text_color(gallery_label, lv_color_white(), 0);
     lv_obj_align_to(gallery_label, gallery_icon, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
+
+    /* 3. SD Card Icon (Right) */
+    lv_obj_t *sd_icon = lv_image_create(s_home_screen);
+    lv_image_set_src(sd_icon, "S:/spiffs/icons/folder_icon.png");
+    lv_obj_align(sd_icon, LV_ALIGN_CENTER, 110, -20);
+    lv_obj_add_flag(sd_icon, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(sd_icon, home_icon_click_cb, LV_EVENT_CLICKED, (void*)UI_SCREEN_FILESYSTEM);
+    
+    lv_obj_t *sd_label = lv_label_create(s_home_screen);
+    lv_label_set_text(sd_label, "Files");
+    lv_obj_set_style_text_font(sd_label, &inter_16, 0);
+    lv_obj_set_style_text_color(sd_label, lv_color_white(), 0);
+    lv_obj_align_to(sd_label, sd_icon, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
     
     lv_obj_add_event_cb(s_home_screen, screen_gesture_cb, LV_EVENT_GESTURE, NULL);
 }
@@ -782,6 +911,10 @@ static void screen_gesture_cb(lv_event_t *e)
             ui_gallery_show_image(s_gallery_index + 1);
         } else if (dir == LV_DIR_RIGHT) { 
             ui_gallery_show_image(s_gallery_index - 1);
+        }
+    } else if (s_current_screen == UI_SCREEN_FILESYSTEM) {
+        if (dir == LV_DIR_BOTTOM) {
+            ui_switch_to_screen_anim(UI_SCREEN_HOME, LV_SCR_LOAD_ANIM_MOVE_BOTTOM);
         }
     }
 }

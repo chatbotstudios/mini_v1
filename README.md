@@ -1,36 +1,32 @@
-# MimiClaw Gemini: The Ultimate S3-ePaper AI Agent
+# mini_v1: AMOLED Smart Display & AI Agent
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Build Status](https://img.shields.io/badge/Build-ESP--IDF--v6.0-green.svg)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/)
+[![Build Status](https://img.shields.io/badge/Build-ESP--IDF--v5.5-green.svg)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/)
 
-**MimiClaw Gemini** is a high-performance, modular AI agent firmware for the ESP32-S3. It transforms a $10 ePaper dev board into a fully autonomous, self-documenting personal assistant that lives in your pocket.
+**mini_v1** is a high-performance, modular AI agent firmware for the ESP32-S3. It transforms an AMOLED round touch display into a fully autonomous, self-documenting personal assistant and smart dashboard.
 
 ---
 
-## 🚀 Key Enhancements (Gemini Edition)
+## 🚀 Key Features & Architecture
 
-- **Modular Skills System**: Agent logic is now decoupled into Markdown files stored in `/spiffs/skills/`. Mimi can "learn" new behaviors just by reading a file.
-- **Integrated Audio Engine**: Supports the **ES8311 I2S Codec** for voice and sonic feedback. Features a background DMA audio service with `play_audio` AI tooling.
-- **RGB Mood LED System**: A sophisticated, state-based visual feedback loop using a WS2812B NeoPixel. Automatically signals Online (Green), Thinking (Purple), Executing (Blue), Connecting (Yellow), Error (Orange), and Offline (Red) states.
+- **LVGL 9 Engine**: Beautiful, buttery-smooth graphics rendering engine tailored for circular AMOLED touch screens.
+- **iOS-Style UI Launcher**: Features a gesture-driven application launcher with app icons, horizontal swiping, and a dynamic page indicator dot array.
+- **SD Card Image Gallery**: A high-performance image gallery that natively scans recursive directories on the SD card to display full-color JPEGs and PNGs.
+- **Stability & Performance**: Features heavily optimized SDMMC DMA configurations to prevent timeouts (`0x107`) during heavy concurrent Wi-Fi usage.
+- **Modular Skills System**: Agent logic is decoupled into Markdown files stored in `/spiffs/skills/`. Mimi can "learn" new behaviors just by reading a file.
 - **Local Rule Engine**: Autonomous "Subconscious" for instant hardware triggers without LLM latency.
-- **Enhanced Display Clarity**: Optimized ePaper driver with 2MHz SPI stabilization and an automated "Full Refresh" anti-ghosting cycle every 10 updates.
-- **High-Density E-Ink UI**: A custom 16x16 pixel icon rendering engine with dynamically updating state icons (e.g. progressive battery fills, precise temperature/humidity iconography, and multi-channel messaging status) for a premium, visually dense dashboard.
-- **Autonomous CLI Bridge**: Mimi can now execute her own firmware console commands (`i2c_scan`, `heap_info`, etc.) autonomously via the `run_cli` tool, giving her root-level diagnostic power.
-- **Unified Tool Registry**: A dynamic C-based registry for hardware tools (`sense`, `display_control`, `led_control`, `play_audio`) and cloud tools (`web_search`, `time`).
-- **Hardware Native**: First-class support for **1.54" ePaper displays** and **SHTC3 temperature/humidity sensors**.
-- **Self-Documenting**: Mimi now has a `/spiffs/tools/` directory containing technical manuals for her own hardware, allowing her to research how to control herself.
+- **Unified Tool Registry**: A dynamic C-based registry for hardware tools and cloud APIs (Discord, Telegram, LLM integration).
 
 ---
 
 ## 🛠 Hardware Specs & Compatibility
 
-Designed specifically for the **ESP32-S3-ePaper-1.54** board (and similar LilyGo/Waveshare variants):
+Designed specifically for **ESP32-S3 round AMOLED displays** (like Waveshare/LilyGo 1.75" variants):
 - **MCU**: ESP32-S3 (Dual-core, 240MHz)
 - **Memory**: 8MB PSRAM / 16MB Flash
-- **Display**: 1.54" GDEH0154D67 ePaper (200x200 pixels)
-- **Audio**: ES8311 I2S DAC + Mono Speaker Amplifier
-- **Sensors**: SHTC3 (Temp/Hum), Integrated Battery Voltage Sensing (GPIO 4 with GPIO 17 Control)
-- **I/O**: Native USB-C (JTAG/Serial), MicroSD Slot, Dual Status LEDs (Red/Green), User Buttons (GPIO 0).
+- **Display**: Round AMOLED Touch Display (466x466 pixels)
+- **Sensors**: AXP2101 PMIC for advanced battery tracking, internal sensors.
+- **I/O**: Native USB-C (JTAG/Serial), MicroSD Slot, Touch Input.
 
 ---
 

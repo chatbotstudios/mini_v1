@@ -716,10 +716,12 @@ static void ui_gallery_show_image(int index) {
     ESP_LOGI(TAG, "Gallery Image [%d/%d]: %s", s_gallery_index + 1, s_gallery_count, path);
 
     /* --- PSRAM Preloader --- */
-    // Pause LVGL drawing so DMA is free BEFORE any SD card reads
-    // We MUST use portMAX_DELAY to block and wait for LVGL to finish its current frame.
-    // If we use 0, it fails to lock and we read the SD card concurrently with DMA!
-    bsp_display_lock(portMAX_DELAY);
+    // Wait for the background QSPI DMA (from the swipe animation) to finish
+    // before we hammer the SPI bus. (bsp_display_lock doesn't work here because 
+    // we are already inside the LVGL task which holds the recursive mutex).
+    vTaskDelay(pdMS_TO_TICKS(150));
+    
+
     if (!s_dashboard_bg_img) {
         s_dashboard_bg_img = lv_image_create(s_dashboard_screen);
         lv_obj_move_to_index(s_dashboard_bg_img, 0);
@@ -758,8 +760,8 @@ static void ui_gallery_show_image(int index) {
     }
     
     // Resume LVGL drawing
-    bsp_display_unlock();
     
+
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, s_dashboard_bg_img);

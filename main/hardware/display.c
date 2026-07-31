@@ -49,14 +49,15 @@ static ui_screen_t s_current_screen = UI_SCREEN_SPLASH;
 static bool s_is_thinking = false;
 
 /* Gallery State */
-#define MAX_GALLERY_IMAGES 100
+#define MAX_GALLERY_IMAGES 32
 static int s_gallery_count = 0;
 static int s_gallery_index = 0;
 static char *s_gallery_paths[MAX_GALLERY_IMAGES] = {0};
 
 /* PSRAM Preloader for Images (Bypasses concurrent DMA issues) */
-static void *s_psram_img_buf = NULL;
-static size_t s_psram_img_size = 0;
+static uint8_t *s_preloaded_jpegs[MAX_GALLERY_IMAGES] = {0};
+static size_t s_preloaded_sizes[MAX_GALLERY_IMAGES] = {0};
+
 static lv_image_dsc_t s_psram_img_dsc = {
     .header = {
         .magic = LV_IMAGE_HEADER_MAGIC,
@@ -696,8 +697,30 @@ static void scan_gallery_dir(const char *dir_path) {
             if (strstr(ent->d_name, ".jpg") || strstr(ent->d_name, ".jpeg") ||
                 strstr(ent->d_name, ".JPG") || strstr(ent->d_name, ".JPEG") ||
                 strstr(ent->d_name, ".png") || strstr(ent->d_name, ".PNG")) {
-                ESP_LOGI(TAG, "=> ADDED to Gallery: %s", fullpath);
-                s_gallery_paths[s_gallery_count++] = strdup(fullpath);
+                
+                FILE *f = fopen(fullpath, "rb");
+                if (f) {
+                    fseek(f, 0, SEEK_END);
+                    size_t file_size = ftell(f);
+                    fseek(f, 0, SEEK_SET);
+
+                    if (file_size > 0) {
+                        uint8_t *psram_buf = heap_caps_malloc(file_size, MALLOC_CAP_SPIRAM);
+                        if (psram_buf) {
+                            if (fread(psram_buf, 1, file_size, f) == file_size) {
+                                s_preloaded_jpegs[s_gallery_count] = psram_buf;
+                                s_preloaded_sizes[s_gallery_count] = file_size;
+                                s_gallery_paths[s_gallery_count] = strdup(fullpath);
+                                s_gallery_count++;
+                                ESP_LOGI(TAG, "=> PRELOADED to PSRAM: %s (%zu bytes)", fullpath, file_size);
+                            } else {
+                                free(psram_buf);
+                                ESP_LOGE(TAG, "Failed to read %s", fullpath);
+                            }
+                        }
+                    }
+                    fclose(f);
+                }
             }
         }
         free(fullpath);
@@ -716,10 +739,7 @@ static void ui_gallery_show_image(int index) {
     ESP_LOGI(TAG, "Gallery Image [%d/%d]: %s", s_gallery_index + 1, s_gallery_count, path);
 
     /* --- PSRAM Preloader --- */
-    // Wait for the background QSPI DMA (from the swipe animation) to finish
-    // before we hammer the SPI bus. (bsp_display_lock doesn't work here because 
-    // we are already inside the LVGL task which holds the recursive mutex).
-    vTaskDelay(pdMS_TO_TICKS(150));
+    // Image is already preloaded in PSRAM, so we don't need to delay for the SD card!
     
 
     if (!s_dashboard_bg_img) {
@@ -731,43 +751,11 @@ static void ui_gallery_show_image(int index) {
     // Smooth crossfade
     lv_obj_set_style_image_opa(s_dashboard_bg_img, 0, 0);
     
-    // POWER WORKAROUND: The Waveshare AXP2101 PMU cannot sustain the concurrent
-    // load of AMOLED (100% brightness) + WiFi Scanning + SD Card SPI DMA.
-    // By dropping the AMOLED brightness during the read, we free up ~150mA
-    // and prevent the 3.3V rail from browning out the SD card!
-    bsp_display_brightness_set(10);
-    vTaskDelay(pdMS_TO_TICKS(50)); // Settle power rails
-
-    FILE *f = fopen(path, "rb");
-    if (f) {
-        fseek(f, 0, SEEK_END);
-        size_t file_size = ftell(f);
-        fseek(f, 0, SEEK_SET);
-
-        if (file_size > s_psram_img_size || s_psram_img_buf == NULL) {
-            if (s_psram_img_buf) free(s_psram_img_buf);
-            // Allocate in PSRAM (or normal malloc which falls back to PSRAM for large sizes)
-            s_psram_img_buf = heap_caps_malloc(file_size, MALLOC_CAP_SPIRAM);
-            s_psram_img_size = file_size;
-        }
-
-        if (s_psram_img_buf) {
-            size_t read_bytes = fread(s_psram_img_buf, 1, file_size, f);
-            if (read_bytes == file_size) {
-                s_psram_img_dsc.data = s_psram_img_buf;
-                s_psram_img_dsc.data_size = file_size;
-                lv_image_set_src(s_dashboard_bg_img, &s_psram_img_dsc);
-            } else {
-                ESP_LOGE(TAG, "Failed to read entire image into PSRAM");
-            }
-        } else {
-            ESP_LOGE(TAG, "Failed to allocate PSRAM for image");
-        }
-        fclose(f);
+    if (s_preloaded_jpegs[s_gallery_index]) {
+        s_psram_img_dsc.data = s_preloaded_jpegs[s_gallery_index];
+        s_psram_img_dsc.data_size = s_preloaded_sizes[s_gallery_index];
+        lv_image_set_src(s_dashboard_bg_img, &s_psram_img_dsc);
     }
-    
-    // Restore AMOLED brightness
-    bsp_display_brightness_set(100);
     
     // Resume LVGL drawing
     

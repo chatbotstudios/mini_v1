@@ -376,7 +376,7 @@ void app_main(void) {
   }
 
   /* Return to Balanced mode */
-  pm_system_set_mode(MIMI_PWR_BALANCED);
+  // pm_system_set_mode(MIMI_PWR_BALANCED);
 
   mimi_update_dashboard(false, true);
 

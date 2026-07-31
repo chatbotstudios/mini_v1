@@ -420,6 +420,8 @@ void display_clear_message(void)
 
 /* ==================== FILESYSTEM VIEWER ==================== */
 
+static char s_fs_paths[50][512];
+
 static void load_directory(const char *path) {
     if (!s_fs_list || !s_fs_title) return;
     
@@ -448,9 +450,8 @@ static void load_directory(const char *path) {
     while ((ent = readdir(dir)) != NULL && count < 50) {
         if (ent->d_name[0] == '.') continue;
         
-        char *fullpath = malloc(512);
-        if (!fullpath) continue;
-        snprintf(fullpath, 512, "%s/%s", path, ent->d_name);
+        snprintf(s_fs_paths[count], 512, "%s/%s", path, ent->d_name);
+        char *fullpath = s_fs_paths[count];
         
         bool is_dir = (ent->d_type == DT_DIR);
         if (ent->d_type == DT_UNKNOWN) {
@@ -463,6 +464,7 @@ static void load_directory(const char *path) {
         const char *icon = is_dir ? LV_SYMBOL_DIRECTORY : LV_SYMBOL_FILE;
         lv_obj_t *btn = lv_list_add_btn(s_fs_list, icon, ent->d_name);
         lv_obj_set_style_text_font(btn, &inter_24, 0);
+        lv_obj_set_style_text_color(btn, lv_color_hex(0xFFFFFF), 0); // Ensure visible text
         lv_obj_add_event_cb(btn, fs_list_btn_cb, LV_EVENT_CLICKED, fullpath);
         
         count++;
@@ -489,8 +491,17 @@ static void fs_list_btn_cb(lv_event_t *e) {
         if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
             load_directory(path);
         } else {
-            // It's a file, maybe show a popup?
             ESP_LOGI(TAG, "Selected file: %s", path);
+            if (strstr(path, ".jpg") || strstr(path, ".jpeg") || strstr(path, ".png") ||
+                strstr(path, ".JPG") || strstr(path, ".JPEG") || strstr(path, ".PNG")) {
+                for (int i = 0; i < s_gallery_count; i++) {
+                    if (strcmp(s_gallery_paths[i], path) == 0) {
+                        ui_gallery_show_image(i);
+                        ui_switch_to_screen(UI_SCREEN_DASHBOARD);
+                        break;
+                    }
+                }
+            }
         }
     }
 }

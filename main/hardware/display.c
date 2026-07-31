@@ -627,13 +627,23 @@ static void scan_gallery_dir(const char *dir_path) {
         if (!fullpath) continue;
         
         snprintf(fullpath, 512, "%s/%s", dir_path, ent->d_name);
+        ESP_LOGI(TAG, "Scanner checking: %s (d_type=%d)", fullpath, ent->d_type);
         
-        if (ent->d_type == DT_DIR) {
+        bool is_dir = (ent->d_type == DT_DIR);
+        if (ent->d_type == DT_UNKNOWN) {
+            struct stat st;
+            if (stat(fullpath, &st) == 0) {
+                is_dir = S_ISDIR(st.st_mode);
+            }
+        }
+
+        if (is_dir) {
             scan_gallery_dir(fullpath);
         } else {
             if (strstr(ent->d_name, ".jpg") || strstr(ent->d_name, ".jpeg") ||
                 strstr(ent->d_name, ".JPG") || strstr(ent->d_name, ".JPEG") ||
                 strstr(ent->d_name, ".png") || strstr(ent->d_name, ".PNG")) {
+                ESP_LOGI(TAG, "=> ADDED to Gallery: %s", fullpath);
                 s_gallery_paths[s_gallery_count++] = strdup(fullpath);
             }
         }

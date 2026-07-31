@@ -87,26 +87,6 @@ static lv_obj_t *s_arc_batt = NULL;
 
 #include <stdio.h>
 
-static bool is_valid_image(const char *path) {
-    const char *vfs_path = path;
-    if (strncmp(path, "S:", 2) == 0) {
-        vfs_path = path + 2;
-    }
-    FILE *f = fopen(vfs_path, "rb");
-    if (!f) return false;
-    uint8_t buf[8];
-    bool valid = false;
-    if (fread(buf, 1, 8, f) >= 2) {
-        if (buf[0] == 0xFF && buf[1] == 0xD8) {
-            valid = true; // JPEG
-        } else if (buf[0] == 0x89 && buf[1] == 0x50 && buf[2] == 0x4E && buf[3] == 0x47 &&
-                   buf[4] == 0x0D && buf[5] == 0x0A && buf[6] == 0x1A && buf[7] == 0x0A) {
-            valid = true; // PNG
-        }
-    }
-    fclose(f);
-    return valid;
-}
 
 #define MAX_WELCOME_MSGS 50
 static char *s_dynamic_messages[MAX_WELCOME_MSGS] = {0};
@@ -739,15 +719,6 @@ static void ui_gallery_show_image(int index) {
     // Pause LVGL drawing so DMA is free BEFORE any SD card reads
     bsp_display_lock(0);
 
-    if (!is_valid_image(path)) {
-        ESP_LOGW(TAG, "Skipping invalid Image: %s", path);
-        // Show next valid image instead of staying black
-        if (s_dashboard_bg_img) {
-            lv_image_set_src(s_dashboard_bg_img, NULL);
-        }
-        bsp_display_unlock();
-        return;
-    }
 
     if (!s_dashboard_bg_img) {
         s_dashboard_bg_img = lv_image_create(s_dashboard_screen);

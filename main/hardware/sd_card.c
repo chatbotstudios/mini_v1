@@ -163,7 +163,7 @@ static esp_err_t try_sdmmc(int max_freq_khz)
 }
 
 /* -------------------------------------------------------------------------- */
-/*  SPI fallback path                                                         */
+/*  SPI fallback path – tuned for reliability on Waveshare 1.75" board        */
 /* -------------------------------------------------------------------------- */
 
 static esp_err_t try_spi(void)
@@ -171,23 +171,26 @@ static esp_err_t try_spi(void)
     ESP_LOGI(TAG, "Falling back to SPI mode (CS=GPIO%d) ...", SD_PIN_CS);
 
     force_cs_high();
-    vTaskDelay(pdMS_TO_TICKS(200));
+    vTaskDelay(pdMS_TO_TICKS(300));          // extra settle time
 
-    // 1. Initialise SPI bus
+    // 1. Initialise SPI bus (conservative settings)
     spi_bus_config_t bus_cfg = {
         .mosi_io_num     = BSP_SD_CMD,       // GPIO 1
         .miso_io_num     = BSP_SD_D0,        // GPIO 3
         .sclk_io_num     = BSP_SD_CLK,       // GPIO 2
         .quadwp_io_num   = -1,
         .quadhd_io_num   = -1,
-        .max_transfer_sz = 4000,
+        .max_transfer_sz = 4096,
+        .flags           = SPICOMMON_BUSFLAG_MASTER,
     };
 
-    esp_err_t ret = spi_bus_initialize(s_spi_host, &bus_cfg, SDSPI_DEFAULT_DMA);
+    // Use SPI3 (SPI2 is often claimed by the QSPI display peripheral)
+    esp_err_t ret = spi_bus_initialize(SPI3_HOST, &bus_cfg, SPI_DMA_CH_AUTO);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "spi_bus_initialize failed: %s", esp_err_to_name(ret));
         return ret;
     }
+    s_spi_host = SPI3_HOST;
 
     // 2. SDSPI device config
     sdspi_device_config_t slot_cfg = SDSPI_DEVICE_CONFIG_DEFAULT();
@@ -197,30 +200,50 @@ static esp_err_t try_spi(void)
     slot_cfg.gpio_wp   = GPIO_NUM_NC;
     slot_cfg.gpio_int  = GPIO_NUM_NC;
 
-    // 3. Host (SPI flavour)
+    // 3. Host – VERY conservative clock for this board
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
     host.slot = s_spi_host;
-    // 10–20 MHz is usually fine in SPI mode on this board
-    host.max_freq_khz = 16000;
+    host.max_freq_khz = 4000;               // ← 4 MHz (was 20 MHz)
 
     esp_vfs_fat_sdmmc_mount_config_t mount_cfg = {
-        .format_if_mount_failed = false,
-        .max_files              = 32,
-        .allocation_unit_size   = 32 * 1024,
+        .format_if_mount_failed   = false,
+        .max_files                = 32,
+        .allocation_unit_size     = 16 * 1024,   // slightly smaller AU helps some cards
         .disk_status_check_enable = true,
     };
 
     ret = esp_vfs_fat_sdspi_mount(SD_MOUNT_POINT, &host, &slot_cfg,
                                   &mount_cfg, &s_card);
-    if (ret == ESP_OK) {
-        s_mode = SD_MODE_SPI;
-        ESP_LOGI(TAG, "SPI mount succeeded");
-    } else {
+    if (ret != ESP_OK) {
         ESP_LOGE(TAG, "SPI mount failed: %s", esp_err_to_name(ret));
         spi_bus_free(s_spi_host);
         s_card = NULL;
+        return ret;
     }
-    return ret;
+
+    s_mode = SD_MODE_SPI;
+    ESP_LOGI(TAG, "SPI mount succeeded @ %d kHz", host.max_freq_khz);
+
+    // ------------------------------------------------------------------
+    // Post-mount health check – read the first sector
+    // ------------------------------------------------------------------
+    uint8_t *test_buf = heap_caps_malloc(512, MALLOC_CAP_DMA);
+    if (test_buf) {
+        ret = sdmmc_read_sectors(s_card, test_buf, 0, 1);
+        free(test_buf);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Post-mount sector-0 read failed (%s) – card is unstable",
+                     esp_err_to_name(ret));
+            esp_vfs_fat_sdcard_unmount(SD_MOUNT_POINT, s_card);
+            spi_bus_free(s_spi_host);
+            s_card = NULL;
+            s_mode = SD_MODE_NONE;
+            return ret;
+        }
+        ESP_LOGI(TAG, "Post-mount sector-0 read OK – SPI path is healthy");
+    }
+
+    return ESP_OK;
 }
 
 /* -------------------------------------------------------------------------- */

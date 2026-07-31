@@ -49,8 +49,8 @@ static const char *TAG = "sd_card";
 #define SD_PIN_CS           GPIO_NUM_41          // Always present on this board
 #define SD_MOUNT_POINT      "/sdcard"
 
-/* SPI host used for the fallback path (SPI2 is free on this board) */
-#define SD_SPI_HOST         SPI2_HOST
+/* SPI host used for the fallback path (SPI3 is free on this board, SPI2 is used by LCD) */
+#define SD_SPI_HOST         SPI3_HOST
 
 /* -------------------------------------------------------------------------- */
 /*  Internal state                                                            */

@@ -20,6 +20,7 @@
 #include "hardware/shtc3.h"
 #include "hardware/pm_system.h"
 #include "agent/agent_metrics.h"
+#include "esp_wifi.h"
 
 static const char *TAG = "display";
 
@@ -34,8 +35,14 @@ static lv_obj_t *s_home_screen = NULL;
 static lv_obj_t *s_offline_screen = NULL;
 static lv_obj_t *s_dashboard_screen = NULL;
 static lv_obj_t *s_filesystem_screen = NULL;
+static lv_obj_t *s_settings_screen = NULL;
 
 static lv_obj_t *s_welcome_msg_label = NULL;
+
+/* Settings UI variables */
+static lv_obj_t *s_settings_list = NULL;
+static lv_obj_t *s_brightness_slider = NULL;
+static lv_obj_t *s_wifi_switch = NULL;
 
 /* Filesystem UI variables */
 static lv_obj_t *s_fs_list = NULL;
@@ -123,6 +130,8 @@ static void create_page_indicator(void);
 static void create_offline_screen(void);
 static void create_dashboard_screen(void);
 static void create_filesystem_screen(void);
+static void create_settings_screen(void);
+static void settings_event_cb(lv_event_t *e);
 static void ui_gallery_enter(void);
 static void load_directory(const char *path);
 static void fs_list_btn_cb(lv_event_t *e);
@@ -166,6 +175,7 @@ esp_err_t display_init(void)
     create_offline_screen();
     create_dashboard_screen();
     create_filesystem_screen();
+    create_settings_screen();
     create_page_indicator();
 
     /* Start on splash */
@@ -252,6 +262,7 @@ void ui_switch_to_screen_anim(ui_screen_t screen, lv_scr_load_anim_t anim_type)
         case UI_SCREEN_OFFLINE:  target = s_offline_screen; break;
         case UI_SCREEN_DASHBOARD: target = s_dashboard_screen; break;
         case UI_SCREEN_FILESYSTEM: target = s_filesystem_screen; break;
+        case UI_SCREEN_SETTINGS: target = s_settings_screen; break;
         default: break;
     }
 
@@ -526,6 +537,94 @@ static void create_filesystem_screen(void) {
     lv_obj_set_style_border_color(s_fs_list, lv_color_hex(0x333333), 0);
     
     lv_obj_add_event_cb(s_filesystem_screen, screen_gesture_cb, LV_EVENT_GESTURE, NULL);
+}
+
+/* ==================== SETTINGS VIEWER ==================== */
+
+static void settings_event_cb(lv_event_t *e) {
+    lv_obj_t *obj = lv_event_get_target(e);
+    lv_event_code_t code = lv_event_get_code(e);
+    const char *action = (const char *)lv_event_get_user_data(e);
+    
+    if (code == LV_EVENT_VALUE_CHANGED) {
+        if (strcmp(action, "wifi") == 0) {
+            bool is_on = lv_obj_has_state(obj, LV_STATE_CHECKED);
+            ESP_LOGI(TAG, "Settings: WiFi toggled %s", is_on ? "ON" : "OFF");
+            if (!is_on) {
+                esp_wifi_stop();
+            } else {
+                esp_wifi_start();
+                esp_wifi_connect();
+            }
+        } else if (strcmp(action, "brightness") == 0) {
+            int val = lv_slider_get_value(obj);
+            ESP_LOGI(TAG, "Settings: Brightness set to %d", val);
+            bsp_display_brightness_set(val);
+        }
+    } else if (code == LV_EVENT_CLICKED) {
+        if (strcmp(action, "reboot") == 0) {
+            ESP_LOGW(TAG, "Settings: Rebooting system...");
+            esp_restart();
+        }
+    }
+}
+
+static void create_settings_screen(void) {
+    s_settings_screen = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_settings_screen, lv_color_hex(0x222222), 0);
+    lv_obj_set_style_bg_opa(s_settings_screen, LV_OPA_COVER, 0);
+    
+    // Title
+    lv_obj_t *title = lv_label_create(s_settings_screen);
+    lv_label_set_text(title, "Settings");
+    lv_obj_set_style_text_font(title, &inter_24, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0x00FFCC), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 15);
+    
+    // Settings List
+    s_settings_list = lv_list_create(s_settings_screen);
+    lv_obj_set_size(s_settings_list, 420, 370);
+    lv_obj_align(s_settings_list, LV_ALIGN_BOTTOM_MID, 0, -20);
+    lv_obj_set_style_bg_color(s_settings_list, lv_color_hex(0x111111), 0);
+    lv_obj_set_style_border_color(s_settings_list, lv_color_hex(0x333333), 0);
+    
+    // Network Section
+    lv_list_add_text(s_settings_list, "Network");
+    
+    // WiFi Toggle
+    lv_obj_t *wifi_container = lv_list_add_btn(s_settings_list, LV_SYMBOL_WIFI, "WiFi Power");
+    lv_obj_set_style_text_font(wifi_container, &inter_24, 0);
+    lv_obj_set_style_text_color(wifi_container, lv_color_hex(0xFFFFFF), 0);
+    s_wifi_switch = lv_switch_create(wifi_container);
+    lv_obj_add_state(s_wifi_switch, LV_STATE_CHECKED); // Assume ON by default
+    lv_obj_align(s_wifi_switch, LV_ALIGN_RIGHT_MID, -10, 0);
+    lv_obj_add_event_cb(s_wifi_switch, settings_event_cb, LV_EVENT_VALUE_CHANGED, "wifi");
+    
+    // Display Section
+    lv_list_add_text(s_settings_list, "Display");
+    
+    // Brightness Slider
+    lv_obj_t *bright_container = lv_list_add_btn(s_settings_list, LV_SYMBOL_SETTINGS, "Brightness");
+    lv_obj_set_style_text_font(bright_container, &inter_24, 0);
+    lv_obj_set_style_text_color(bright_container, lv_color_hex(0xFFFFFF), 0);
+    s_brightness_slider = lv_slider_create(bright_container);
+    lv_slider_set_range(s_brightness_slider, 10, 100);
+    lv_slider_set_value(s_brightness_slider, 100, LV_ANIM_OFF);
+    lv_obj_set_width(s_brightness_slider, 150);
+    lv_obj_align(s_brightness_slider, LV_ALIGN_RIGHT_MID, -10, 0);
+    lv_obj_add_event_cb(s_brightness_slider, settings_event_cb, LV_EVENT_VALUE_CHANGED, "brightness");
+    
+    // System Section
+    lv_list_add_text(s_settings_list, "System");
+    
+    // Reboot Button
+    lv_obj_t *reboot_btn = lv_list_add_btn(s_settings_list, LV_SYMBOL_POWER, "Reboot Device");
+    lv_obj_set_style_text_font(reboot_btn, &inter_24, 0);
+    lv_obj_set_style_text_color(reboot_btn, lv_color_hex(0xFF5555), 0);
+    lv_obj_add_event_cb(reboot_btn, settings_event_cb, LV_EVENT_CLICKED, "reboot");
+    
+    // Allow swiping back down
+    lv_obj_add_event_cb(s_settings_screen, screen_gesture_cb, LV_EVENT_GESTURE, NULL);
 }
 
 /* ==================== SCREEN CREATION ==================== */
@@ -835,9 +934,24 @@ static void offline_tap_cb(lv_event_t *e)
     ui_show_random_welcome();
 }
 
+static ui_screen_t s_previous_screen = UI_SCREEN_HOME;
+
 static void screen_gesture_cb(lv_event_t *e)
 {
     lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_active());
+    
+    if (dir == LV_DIR_TOP && s_current_screen != UI_SCREEN_SETTINGS && s_current_screen != UI_SCREEN_SPLASH) {
+        s_previous_screen = s_current_screen;
+        ui_switch_to_screen_anim(UI_SCREEN_SETTINGS, LV_SCR_LOAD_ANIM_MOVE_TOP);
+        return;
+    }
+    
+    if (s_current_screen == UI_SCREEN_SETTINGS) {
+        if (dir == LV_DIR_BOTTOM) {
+            ui_switch_to_screen_anim(s_previous_screen, LV_SCR_LOAD_ANIM_MOVE_BOTTOM);
+        }
+        return;
+    }
     
     if (s_current_screen == UI_SCREEN_HOME) {
         if (dir == LV_DIR_RIGHT) {

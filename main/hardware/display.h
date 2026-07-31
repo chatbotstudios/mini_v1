@@ -15,6 +15,7 @@ typedef enum {
     UI_SCREEN_OFFLINE,
     UI_SCREEN_DASHBOARD,
     UI_SCREEN_FILESYSTEM,
+    UI_SCREEN_SETTINGS,
     UI_SCREEN_COUNT
 } ui_screen_t;
 

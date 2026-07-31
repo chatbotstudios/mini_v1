@@ -160,11 +160,18 @@ esp_err_t bsp_sdcard_mount(void)
 #else
         .format_if_mount_failed = false,
 #endif
-        .max_files = 5,
-        .allocation_unit_size = 16 * 1024};
+        .max_files = 20,
+        .allocation_unit_size = 32 * 1024};
+
+    // Explicitly force CS high (GPIO 41 on Waveshare board) to prevent SD card from entering SPI mode
+    gpio_set_direction(GPIO_NUM_41, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_41, 1);
+    
+    // Give the card time to power up and stabilize
+    vTaskDelay(pdMS_TO_TICKS(300));
 
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
-    host.max_freq_khz = 1000; // Drop to 1MHz for extreme stability against signal ringing
+    host.max_freq_khz = 5000; // 5MHz robust speed
     const sdmmc_slot_config_t slot_config = {
         .clk = BSP_SD_CLK,
         .cmd = BSP_SD_CMD,

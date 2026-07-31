@@ -32,7 +32,7 @@ esp_err_t pm_system_set_mode(mimi_pwr_mode_t mode) {
     pm_config.max_freq_mhz = 240;
     pm_config.min_freq_mhz = 160;
     pm_config.light_sleep_enable = false;
-    esp_wifi_set_ps(WIFI_PS_NONE);
+    esp_wifi_set_ps(WIFI_PS_MIN_MODEM); // Never use WIFI_PS_NONE! It causes brownouts!
     break;
   }
 

@@ -241,23 +241,10 @@ esp_err_t sd_card_init(void)
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
 
-    ESP_LOGI(TAG, "=== SD Card bring-up (SDMMC → SPI fallback) ===");
+    ESP_LOGI(TAG, "=== SD Card bring-up (FORCING SPI MODE) ===");
 
-    // Progressive SDMMC attempts (Skip 10MHz as it succeeds mount but fails DMA!)
-    const int freqs[] = { 5000, 2000, 1000 };  // kHz
-    esp_err_t ret = ESP_FAIL;
-
-    for (size_t i = 0; i < sizeof(freqs)/sizeof(freqs[0]); i++) {
-        ret = try_sdmmc(freqs[i]);
-        if (ret == ESP_OK) break;
-        vTaskDelay(pdMS_TO_TICKS(150));
-    }
-
-    // Fallback
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "All SDMMC attempts failed – trying SPI");
-        ret = try_spi();
-    }
+    // Force SPI mode immediately since SDMMC gives false-positive mounts that fail during DMA
+    esp_err_t ret = try_spi();
 
     if (ret == ESP_OK) {
         log_card_info();

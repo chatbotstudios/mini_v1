@@ -717,9 +717,9 @@ static void ui_gallery_show_image(int index) {
 
     /* --- PSRAM Preloader --- */
     // Pause LVGL drawing so DMA is free BEFORE any SD card reads
-    bsp_display_lock(0);
-
-
+    // We MUST use portMAX_DELAY to block and wait for LVGL to finish its current frame.
+    // If we use 0, it fails to lock and we read the SD card concurrently with DMA!
+    bsp_display_lock(portMAX_DELAY);
     if (!s_dashboard_bg_img) {
         s_dashboard_bg_img = lv_image_create(s_dashboard_screen);
         lv_obj_move_to_index(s_dashboard_bg_img, 0);

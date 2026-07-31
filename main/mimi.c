@@ -275,9 +275,7 @@ void app_main(void) {
   ESP_ERROR_CHECK(esp_event_loop_create_default());
   ESP_ERROR_CHECK(init_spiffs());
 
-  ESP_ERROR_CHECK(display_init());
-
-  /* Try to mount SD Card */
+  /* Try to mount SD Card BEFORE display_init so JPEGs can be found */
   esp_err_t sd_err = sd_card_init();
   if (sd_err != ESP_OK) {
     ESP_LOGW(TAG, "SD Card not available.");
@@ -285,6 +283,8 @@ void app_main(void) {
     // Now that SD is mounted, load files!
     ui_load_welcome_messages();
   }
+
+  ESP_ERROR_CHECK(display_init());
 
   xTaskCreate(ui_task, "ui_task", 4096, NULL, 5, NULL);
 

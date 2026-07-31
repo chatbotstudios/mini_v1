@@ -683,7 +683,9 @@ static void ui_gallery_show_image(int index) {
     if (!is_valid_image(path)) {
         ESP_LOGW(TAG, "Skipping invalid Image: %s", path);
         // Show next valid image instead of staying black
-        lv_image_set_src(s_dashboard_bg_img, NULL);
+        if (s_dashboard_bg_img) {
+            lv_image_set_src(s_dashboard_bg_img, NULL);
+        }
         return;
     }
 

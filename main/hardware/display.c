@@ -128,6 +128,7 @@ static void offline_tap_cb(lv_event_t *e);
 static void screen_gesture_cb(lv_event_t *e);
 static void scan_gallery_dir(const char *dir_path);
 static void ui_gallery_show_image(int index);
+static void gallery_enter_timer_cb(lv_timer_t *timer);
 
 /* ==================== PUBLIC API ==================== */
 
@@ -185,9 +186,12 @@ static void ui_bg_opa_anim_cb(void * var, int32_t v)
     lv_obj_set_style_image_opa((lv_obj_t *)var, v, 0);
 }
 
-static void ui_set_random_background(void)
+static void set_random_bg_timer_cb(lv_timer_t *timer)
 {
-    if (!s_offline_screen) return;
+    if (!s_offline_screen) {
+        lv_timer_del(timer);
+        return;
+    }
     
     // Ensure directory exists
     mkdir("/sdcard/backgrounds", 0777);
@@ -247,11 +251,20 @@ static void ui_set_random_background(void)
             free(files[i]);
         }
     } else {
+        ESP_LOGD(TAG, "No valid background images found");
         if (s_offline_bg_img) {
             lv_obj_del(s_offline_bg_img);
             s_offline_bg_img = NULL;
         }
     }
+    lv_timer_del(timer);
+}
+
+static void ui_set_random_background(void)
+{
+    /* Delay SD Card operations by 400ms to allow LVGL screen transition to finish.
+       This prevents LCD DMA starvation of the SDMMC DMA! */
+    lv_timer_create(set_random_bg_timer_cb, 400, NULL);
 }
 
 void ui_update_page_indicator(ui_screen_t screen) {
@@ -693,10 +706,20 @@ static void ui_gallery_show_image(int index) {
     lv_anim_start(&a);
 }
 
-static void ui_gallery_enter(void)
+static void gallery_enter_timer_cb(lv_timer_t *timer)
 {
     if (s_gallery_count > 0) {
         ui_gallery_show_image(s_gallery_index);
+    }
+    lv_timer_del(timer);
+}
+
+static void ui_gallery_enter(void)
+{
+    if (s_gallery_count > 0) {
+        /* Delay JPEG load by 400ms to allow LVGL screen transition to finish.
+           This prevents the LCD DMA from starving the SDMMC DMA! */
+        lv_timer_create(gallery_enter_timer_cb, 400, NULL);
     } else {
         lv_obj_t *fallback = lv_label_create(s_dashboard_screen);
         lv_label_set_text(fallback, "No JPEGs found on SD Card!");

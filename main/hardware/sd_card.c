@@ -243,8 +243,8 @@ esp_err_t sd_card_init(void)
 
     ESP_LOGI(TAG, "=== SD Card bring-up (SDMMC → SPI fallback) ===");
 
-    // Progressive SDMMC attempts
-    const int freqs[] = { 10000, 5000, 2000, 1000 };  // kHz
+    // Progressive SDMMC attempts (Skip 10MHz as it succeeds mount but fails DMA!)
+    const int freqs[] = { 5000, 2000, 1000 };  // kHz
     esp_err_t ret = ESP_FAIL;
 
     for (size_t i = 0; i < sizeof(freqs)/sizeof(freqs[0]); i++) {

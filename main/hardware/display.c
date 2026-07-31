@@ -65,6 +65,16 @@ static char *s_gallery_paths[MAX_GALLERY_IMAGES] = {0};
 static uint8_t *s_preloaded_jpegs[MAX_GALLERY_IMAGES] = {0};
 static size_t s_preloaded_sizes[MAX_GALLERY_IMAGES] = {0};
 
+/* File System RAM Cache (Bypasses concurrent DMA issues during UI) */
+#define MAX_FS_NODES 256
+typedef struct {
+    char parent_path[128];
+    char name[64];
+    bool is_dir;
+} fs_node_t;
+static fs_node_t s_fs_nodes[MAX_FS_NODES];
+static int s_fs_node_count = 0;
+
 static lv_image_dsc_t s_psram_img_dsc = {
     .header = {
         .magic = LV_IMAGE_HEADER_MAGIC,
@@ -443,12 +453,6 @@ static void load_directory(const char *path) {
     // Clear list
     lv_obj_clean(s_fs_list);
     
-    DIR *dir = opendir(path);
-    if (!dir) {
-        lv_list_add_text(s_fs_list, "Error opening directory!");
-        return;
-    }
-    
     // If not root, add ".." button
     if (strcmp(path, "/sdcard") != 0 && strcmp(path, "/sdcard/") != 0) {
         lv_obj_t *btn = lv_list_add_btn(s_fs_list, LV_SYMBOL_UP, " .. (Go Up)");
@@ -456,31 +460,23 @@ static void load_directory(const char *path) {
         lv_obj_add_event_cb(btn, fs_list_btn_cb, LV_EVENT_CLICKED, strdup(".."));
     }
     
-    struct dirent *ent;
     int count = 0;
-    while ((ent = readdir(dir)) != NULL && count < 50) {
-        if (ent->d_name[0] == '.') continue;
-        
-        snprintf(s_fs_paths[count], 512, "%s/%s", path, ent->d_name);
-        char *fullpath = s_fs_paths[count];
-        
-        bool is_dir = (ent->d_type == DT_DIR);
-        if (ent->d_type == DT_UNKNOWN) {
-            struct stat st;
-            if (stat(fullpath, &st) == 0) {
-                is_dir = S_ISDIR(st.st_mode);
-            }
+    // Iterate RAM cache instead of querying SD card live
+    for (int i = 0; i < s_fs_node_count && count < 50; i++) {
+        if (strcmp(s_fs_nodes[i].parent_path, path) == 0) {
+            
+            snprintf(s_fs_paths[count], 512, "%s/%s", path, s_fs_nodes[i].name);
+            char *fullpath = s_fs_paths[count];
+            
+            const char *icon = s_fs_nodes[i].is_dir ? LV_SYMBOL_DIRECTORY : LV_SYMBOL_FILE;
+            lv_obj_t *btn = lv_list_add_btn(s_fs_list, icon, s_fs_nodes[i].name);
+            lv_obj_set_style_text_font(btn, &inter_24, 0);
+            lv_obj_set_style_text_color(btn, lv_color_hex(0xFFFFFF), 0); // Ensure visible text
+            lv_obj_add_event_cb(btn, fs_list_btn_cb, LV_EVENT_CLICKED, fullpath);
+            
+            count++;
         }
-        
-        const char *icon = is_dir ? LV_SYMBOL_DIRECTORY : LV_SYMBOL_FILE;
-        lv_obj_t *btn = lv_list_add_btn(s_fs_list, icon, ent->d_name);
-        lv_obj_set_style_text_font(btn, &inter_24, 0);
-        lv_obj_set_style_text_color(btn, lv_color_hex(0xFFFFFF), 0); // Ensure visible text
-        lv_obj_add_event_cb(btn, fs_list_btn_cb, LV_EVENT_CLICKED, fullpath);
-        
-        count++;
     }
-    closedir(dir);
 }
 
 static void fs_list_btn_cb(lv_event_t *e) {
@@ -497,9 +493,18 @@ static void fs_list_btn_cb(lv_event_t *e) {
             load_directory("/sdcard");
         }
     } else {
-        // Check if it's a directory
-        struct stat st;
-        if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
+        bool is_dir = false;
+        // Check RAM cache instead of live stat()
+        for (int i = 0; i < s_fs_node_count; i++) {
+            char fullpath[192];
+            snprintf(fullpath, sizeof(fullpath), "%s/%s", s_fs_nodes[i].parent_path, s_fs_nodes[i].name);
+            if (strcmp(fullpath, path) == 0) {
+                is_dir = s_fs_nodes[i].is_dir;
+                break;
+            }
+        }
+        
+        if (is_dir) {
             load_directory(path);
         } else {
             ESP_LOGI(TAG, "Selected file: %s", path);
@@ -596,6 +601,17 @@ static void create_settings_screen(void) {
     lv_obj_set_style_text_font(wifi_container, &inter_24, 0);
     lv_obj_set_style_text_color(wifi_container, lv_color_hex(0xFFFFFF), 0);
     s_wifi_switch = lv_switch_create(wifi_container);
+    
+    // Style: Main background (OFF state)
+    lv_obj_set_style_bg_color(s_wifi_switch, lv_color_hex(0x9E9E9E), LV_PART_MAIN | LV_STATE_DEFAULT);
+    // Style: Main background (ON state)
+    lv_obj_set_style_bg_color(s_wifi_switch, lv_color_hex(0x9B51E0), LV_PART_MAIN | LV_STATE_CHECKED);
+    // Style: Indicator (ON state)
+    lv_obj_set_style_bg_color(s_wifi_switch, lv_color_hex(0x6200EE), LV_PART_INDICATOR | LV_STATE_CHECKED);
+    // Style: Knob
+    lv_obj_set_style_bg_color(s_wifi_switch, lv_color_hex(0xFFFFFF), LV_PART_KNOB | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(s_wifi_switch, lv_color_hex(0x6200EE), LV_PART_KNOB | LV_STATE_CHECKED);
+
     lv_obj_add_state(s_wifi_switch, LV_STATE_CHECKED); // Assume ON by default
     lv_obj_align(s_wifi_switch, LV_ALIGN_RIGHT_MID, -10, 0);
     lv_obj_add_event_cb(s_wifi_switch, settings_event_cb, LV_EVENT_VALUE_CHANGED, "wifi");
@@ -784,7 +800,7 @@ static void scan_gallery_dir(const char *dir_path) {
     if (!dir) return;
 
     struct dirent *ent;
-    while ((ent = readdir(dir)) != NULL && s_gallery_count < MAX_GALLERY_IMAGES) {
+    while ((ent = readdir(dir)) != NULL) {
         if (ent->d_name[0] == '.') continue; // Skip hidden/parent dirs
 
         char *fullpath = malloc(512);
@@ -801,6 +817,14 @@ static void scan_gallery_dir(const char *dir_path) {
             }
         }
 
+        // Add to RAM Cache
+        if (s_fs_node_count < MAX_FS_NODES) {
+            strncpy(s_fs_nodes[s_fs_node_count].parent_path, dir_path, 127);
+            strncpy(s_fs_nodes[s_fs_node_count].name, ent->d_name, 63);
+            s_fs_nodes[s_fs_node_count].is_dir = is_dir;
+            s_fs_node_count++;
+        }
+
         if (is_dir) {
             scan_gallery_dir(fullpath);
         } else {
@@ -808,28 +832,30 @@ static void scan_gallery_dir(const char *dir_path) {
                 strstr(ent->d_name, ".JPG") || strstr(ent->d_name, ".JPEG") ||
                 strstr(ent->d_name, ".png") || strstr(ent->d_name, ".PNG")) {
                 
-                FILE *f = fopen(fullpath, "rb");
-                if (f) {
-                    fseek(f, 0, SEEK_END);
-                    size_t file_size = ftell(f);
-                    fseek(f, 0, SEEK_SET);
+                if (s_gallery_count < MAX_GALLERY_IMAGES) {
+                    FILE *f = fopen(fullpath, "rb");
+                    if (f) {
+                        fseek(f, 0, SEEK_END);
+                        size_t file_size = ftell(f);
+                        fseek(f, 0, SEEK_SET);
 
-                    if (file_size > 0) {
-                        uint8_t *psram_buf = heap_caps_malloc(file_size, MALLOC_CAP_SPIRAM);
-                        if (psram_buf) {
-                            if (fread(psram_buf, 1, file_size, f) == file_size) {
-                                s_preloaded_jpegs[s_gallery_count] = psram_buf;
-                                s_preloaded_sizes[s_gallery_count] = file_size;
-                                s_gallery_paths[s_gallery_count] = strdup(fullpath);
-                                s_gallery_count++;
-                                ESP_LOGI(TAG, "=> PRELOADED to PSRAM: %s (%zu bytes)", fullpath, file_size);
-                            } else {
-                                free(psram_buf);
-                                ESP_LOGE(TAG, "Failed to read %s", fullpath);
+                        if (file_size > 0) {
+                            uint8_t *psram_buf = heap_caps_malloc(file_size, MALLOC_CAP_SPIRAM);
+                            if (psram_buf) {
+                                if (fread(psram_buf, 1, file_size, f) == file_size) {
+                                    s_preloaded_jpegs[s_gallery_count] = psram_buf;
+                                    s_preloaded_sizes[s_gallery_count] = file_size;
+                                    s_gallery_paths[s_gallery_count] = strdup(fullpath);
+                                    s_gallery_count++;
+                                    ESP_LOGI(TAG, "=> PRELOADED to PSRAM: %s (%zu bytes)", fullpath, file_size);
+                                } else {
+                                    free(psram_buf);
+                                    ESP_LOGE(TAG, "Failed to read %s", fullpath);
+                                }
                             }
                         }
+                        fclose(f);
                     }
-                    fclose(f);
                 }
             }
         }

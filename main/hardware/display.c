@@ -14,6 +14,7 @@
 #include <sys/stat.h>
 #include "esp_random.h"
 #include <errno.h>
+#include "esp_heap_caps.h"
 #include "wifi/wifi_manager.h"
 #include "hardware/battery.h"
 #include "hardware/shtc3.h"
@@ -48,10 +49,26 @@ static ui_screen_t s_current_screen = UI_SCREEN_SPLASH;
 static bool s_is_thinking = false;
 
 /* Gallery State */
-#define MAX_GALLERY_IMAGES 200
-static char *s_gallery_paths[MAX_GALLERY_IMAGES] = {0};
+#define MAX_GALLERY_IMAGES 100
 static int s_gallery_count = 0;
 static int s_gallery_index = 0;
+static char *s_gallery_paths[MAX_GALLERY_IMAGES] = {0};
+
+/* PSRAM Preloader for Images (Bypasses concurrent DMA issues) */
+static void *s_psram_img_buf = NULL;
+static size_t s_psram_img_size = 0;
+static lv_image_dsc_t s_psram_img_dsc = {
+    .header = {
+        .magic = LV_IMAGE_HEADER_MAGIC,
+        .cf = LV_COLOR_FORMAT_RAW,
+        .flags = 0,
+        .w = 0,
+        .h = 0,
+        .stride = 0,
+    },
+    .data_size = 0,
+    .data = NULL,
+};
 static lv_obj_t *s_batt_overlay = NULL;
 
 /* Dashboard UI elements */
@@ -715,7 +732,7 @@ static void ui_gallery_show_image(int index) {
     s_gallery_index = index;
 
     static char path[128];
-    snprintf(path, sizeof(path), "S:%s", s_gallery_paths[s_gallery_index]);
+    snprintf(path, sizeof(path), "%s", s_gallery_paths[s_gallery_index]);
     ESP_LOGI(TAG, "Gallery Image [%d/%d]: %s", s_gallery_index + 1, s_gallery_count, path);
 
     if (!is_valid_image(path)) {
@@ -735,7 +752,41 @@ static void ui_gallery_show_image(int index) {
     
     // Smooth crossfade
     lv_obj_set_style_image_opa(s_dashboard_bg_img, 0, 0);
-    lv_image_set_src(s_dashboard_bg_img, path);
+
+    /* --- PSRAM Preloader --- */
+    // Pause LVGL drawing so DMA is free
+    bsp_display_lock(0);
+    
+    FILE *f = fopen(path, "rb");
+    if (f) {
+        fseek(f, 0, SEEK_END);
+        size_t file_size = ftell(f);
+        fseek(f, 0, SEEK_SET);
+
+        if (file_size > s_psram_img_size || s_psram_img_buf == NULL) {
+            if (s_psram_img_buf) free(s_psram_img_buf);
+            // Allocate in PSRAM (or normal malloc which falls back to PSRAM for large sizes)
+            s_psram_img_buf = heap_caps_malloc(file_size, MALLOC_CAP_SPIRAM);
+            s_psram_img_size = file_size;
+        }
+
+        if (s_psram_img_buf) {
+            size_t read_bytes = fread(s_psram_img_buf, 1, file_size, f);
+            if (read_bytes == file_size) {
+                s_psram_img_dsc.data = s_psram_img_buf;
+                s_psram_img_dsc.data_size = file_size;
+                lv_image_set_src(s_dashboard_bg_img, &s_psram_img_dsc);
+            } else {
+                ESP_LOGE(TAG, "Failed to read entire image into PSRAM");
+            }
+        } else {
+            ESP_LOGE(TAG, "Failed to allocate PSRAM for image");
+        }
+        fclose(f);
+    }
+    
+    // Resume LVGL drawing
+    bsp_display_unlock();
     
     lv_anim_t a;
     lv_anim_init(&a);

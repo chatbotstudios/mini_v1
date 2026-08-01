@@ -117,8 +117,13 @@ extern unsigned lodepng_decode32(unsigned char** out, unsigned* w, unsigned* h, 
 static void decode_image_to_buffer(int index, uint16_t *dest_buf) {
     if (index < 0 || index >= s_gallery_count) return;
     if (!s_preloaded_jpegs[index] || !dest_buf) return;
+    if (s_preloaded_sizes[index] < 8) return;
     
-    if (strstr(s_gallery_paths[index], ".png") || strstr(s_gallery_paths[index], ".PNG")) {
+    // Check magic bytes instead of extension (AI generators often mislabel PNGs as JPGs)
+    bool is_png = (s_preloaded_jpegs[index][0] == 0x89 && s_preloaded_jpegs[index][1] == 0x50 && 
+                   s_preloaded_jpegs[index][2] == 0x4E && s_preloaded_jpegs[index][3] == 0x47);
+    
+    if (is_png) {
         // Handle PNG
         unsigned char* out = NULL;
         unsigned w, h;
@@ -188,9 +193,11 @@ static void gallery_decode_task(void *arg) {
                 s_gallery_img_dscs[req_index].data = (const uint8_t*)s_triple_buffers[0];
                 
                 if (s_gallery_index == req_index && s_current_screen == UI_SCREEN_DASHBOARD) {
-                    bsp_display_lock(portMAX_DELAY);
-                    lv_image_set_src(s_dashboard_bg_img, &s_gallery_img_dscs[req_index]);
-                    bsp_display_unlock();
+                    if (s_dashboard_bg_img) {
+                        bsp_display_lock(portMAX_DELAY);
+                        lv_image_set_src(s_dashboard_bg_img, &s_gallery_img_dscs[req_index]);
+                        bsp_display_unlock();
+                    }
                 }
             }
             

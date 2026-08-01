@@ -886,8 +886,14 @@ static void ui_gallery_show_image(int index) {
     lv_obj_set_style_image_opa(s_dashboard_bg_img, 0, 0);
     
     if (s_preloaded_jpegs[s_gallery_index]) {
+        // Show loading message to the user because TJPGD software decode takes a few seconds
+        display_show_message("Decoding Image...\nPlease wait.");
+        lv_refr_now(NULL); // Force flush to display immediately
+        
         // Use the uniquely distinct image descriptor so LVGL can properly cache the decoded RGB map!
         lv_image_set_src(s_dashboard_bg_img, &s_gallery_img_dscs[s_gallery_index]);
+        
+        display_clear_message();
     }
     
     // Resume LVGL drawing

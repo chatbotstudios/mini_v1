@@ -6,13 +6,21 @@
 #include "mimi_config.h"
 
 static const char *TAG = "pm_sys";
-static mimi_pwr_mode_t s_current_mode = MIMI_PWR_BALANCED;
+static mimi_pwr_mode_t s_current_mode = MIMI_PWR_PERFORMANCE;
 
-esp_err_t pm_system_init(void) {
-  ESP_LOGI(TAG, "Initializing Power Management");
-
-  /* Default to Balanced */
-  return pm_system_set_mode(MIMI_PWR_BALANCED);
+esp_err_t pm_system_init(void)
+{
+#ifdef CONFIG_PM_ENABLE
+    esp_pm_config_t pm_config = {
+        .max_freq_mhz = 240,
+        .min_freq_mhz = 240,
+        .light_sleep_enable = true
+    };
+    ESP_ERROR_CHECK(esp_pm_configure(&pm_config));
+#endif
+  
+  /* Default to Performance */
+  return pm_system_set_mode(MIMI_PWR_PERFORMANCE);
 }
 
 esp_err_t pm_system_set_mode(mimi_pwr_mode_t mode) {

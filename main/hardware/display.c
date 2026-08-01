@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <rom/tjpgd.h>
 #include "esp_random.h"
 #include <errno.h>
 #include "esp_heap_caps.h"
@@ -64,6 +65,121 @@ static int s_gallery_index = 0;
 static uint8_t *s_preloaded_jpegs[MAX_GALLERY_IMAGES] = {0};
 static size_t s_preloaded_sizes[MAX_GALLERY_IMAGES] = {0};
 static lv_image_dsc_t s_gallery_img_dscs[MAX_GALLERY_IMAGES] = {0};
+
+/* Triple Buffering System for Seamless UX */
+static uint16_t *s_triple_buffers[3] = {NULL, NULL, NULL}; // 0: Current, 1: Next, 2: Prev
+static int s_buffer_indices[3] = {-1, -1, -1};
+static QueueHandle_t s_decode_queue = NULL;
+static TaskHandle_t s_decode_task_handle = NULL;
+#define DECODE_BUF_SIZE (466 * 466 * 2)
+
+typedef struct {
+    uint8_t *data;
+    size_t size;
+    size_t pos;
+    uint16_t *dest_buf;
+} jpg_src_t;
+
+static UINT gallery_infunc(JDEC *jd, BYTE *buff, UINT ndata) {
+    jpg_src_t *src = (jpg_src_t*)jd->device;
+    if (!src || src->pos >= src->size) return 0;
+    UINT len = src->size - src->pos;
+    if (len > ndata) len = ndata;
+    if (buff) memcpy(buff, src->data + src->pos, len);
+    src->pos += len;
+    return len;
+}
+
+static UINT gallery_outfunc(JDEC *jd, void *bitmap, JRECT *rect) {
+    jpg_src_t *src = (jpg_src_t*)jd->device;
+    uint8_t *rgb888 = (uint8_t*)bitmap;
+    uint16_t *dest = src->dest_buf;
+    
+    // We assume 466x466 width. 
+    // Out of bounds check
+    if (rect->right >= 466 || rect->bottom >= 466) return 1;
+
+    for (int y = rect->top; y <= rect->bottom; y++) {
+        for (int x = rect->left; x <= rect->right; x++) {
+            uint8_t r = *rgb888++;
+            uint8_t g = *rgb888++;
+            uint8_t b = *rgb888++;
+            // RGB888 to RGB565 (Little Endian for ESP32/LVGL defaults usually, unless SWAP is enabled)
+            uint16_t color565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+            dest[y * 466 + x] = color565;
+        }
+    }
+    return 1;
+}
+
+static void decode_image_to_buffer(int index, uint16_t *dest_buf) {
+    if (index < 0 || index >= s_gallery_count) return;
+    if (!s_preloaded_jpegs[index] || !dest_buf) return;
+    
+    // For now we only support JPEGs in this custom TJPGD fast path.
+    // PNGs will just fall back to LVGL if they aren't parsed here, but we will focus on JPEG.
+    
+    jpg_src_t src = {
+        .data = s_preloaded_jpegs[index],
+        .size = s_preloaded_sizes[index],
+        .pos = 0,
+        .dest_buf = dest_buf
+    };
+    
+    uint8_t *workb = malloc(4096); // Enough for ROM TJPGD
+    if (!workb) return;
+    
+    JDEC jd;
+    JRESULT rc = jd_prepare(&jd, gallery_infunc, workb, 4096, &src);
+    if (rc == JDR_OK) {
+        // Output scaled to 1:1
+        jd_decomp(&jd, gallery_outfunc, 0);
+    }
+    free(workb);
+}
+
+static void gallery_decode_task(void *arg) {
+    while (1) {
+        uint32_t req_index;
+        if (xQueueReceive(s_decode_queue, &req_index, portMAX_DELAY)) {
+            // Determine adjacent indices
+            int prev = (req_index - 1 < 0) ? s_gallery_count - 1 : req_index - 1;
+            int next = (req_index + 1 >= s_gallery_count) ? 0 : req_index + 1;
+            
+            // Decode CURRENT (priority 1)
+            if (s_buffer_indices[0] != req_index && s_triple_buffers[0]) {
+                ESP_LOGI(TAG, "Decoding CURRENT image %lu into Buffer A", req_index);
+                decode_image_to_buffer(req_index, s_triple_buffers[0]);
+                s_buffer_indices[0] = req_index;
+                
+                // Set the LVGL image descriptor now that it's decoded
+                s_gallery_img_dscs[req_index].data = (const uint8_t*)s_triple_buffers[0];
+                
+                if (s_gallery_index == req_index && s_current_screen == UI_SCREEN_DASHBOARD) {
+                    bsp_display_lock(portMAX_DELAY);
+                    lv_image_set_src(s_dashboard_bg_img, &s_gallery_img_dscs[req_index]);
+                    bsp_display_unlock();
+                }
+            }
+            
+            // Decode NEXT (priority 2)
+            if (s_buffer_indices[1] != next && s_triple_buffers[1]) {
+                ESP_LOGI(TAG, "Decoding NEXT image %d into Buffer B", next);
+                decode_image_to_buffer(next, s_triple_buffers[1]);
+                s_buffer_indices[1] = next;
+                s_gallery_img_dscs[next].data = (const uint8_t*)s_triple_buffers[1];
+            }
+            
+            // Decode PREV (priority 3)
+            if (s_buffer_indices[2] != prev && s_triple_buffers[2]) {
+                ESP_LOGI(TAG, "Decoding PREV image %d into Buffer C", prev);
+                decode_image_to_buffer(prev, s_triple_buffers[2]);
+                s_buffer_indices[2] = prev;
+                s_gallery_img_dscs[prev].data = (const uint8_t*)s_triple_buffers[2];
+            }
+        }
+    }
+}
 
 /* File System RAM Cache (Bypasses concurrent DMA issues during UI) */
 #define MAX_FS_NODES 256
@@ -185,6 +301,13 @@ esp_err_t display_init(void)
     bsp_display_unlock();
 
     ESP_LOGI(TAG, "Multi-screen UI initialized successfully.");
+    
+    /* Initialize Gallery Decode Task */
+    s_decode_queue = xQueueCreate(10, sizeof(uint32_t));
+    if (s_decode_queue) {
+        xTaskCreate(gallery_decode_task, "gallery_dec", 8192, NULL, 5, &s_decode_task_handle);
+    }
+    
     
     /* Pre-scan the SD card for JPEGs outside of the GUI task 
        to prevent DMA bus starvation during screen transitions! */
@@ -778,6 +901,7 @@ static void create_offline_screen(void)
 static void create_dashboard_screen(void)
 {
     s_dashboard_screen = lv_obj_create(NULL);
+    lv_obj_clear_flag(s_dashboard_screen, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(s_dashboard_screen, lv_color_black(), 0);
     lv_obj_add_event_cb(s_dashboard_screen, screen_gesture_cb, LV_EVENT_GESTURE, NULL);
 }
@@ -836,13 +960,13 @@ static void scan_gallery_dir(const char *dir_path) {
                                     
                                     // Initialize distinct LVGL image descriptor for cache recognition
                                     s_gallery_img_dscs[s_gallery_count].header.magic = LV_IMAGE_HEADER_MAGIC;
-                                    s_gallery_img_dscs[s_gallery_count].header.cf = LV_COLOR_FORMAT_RAW;
+                                    s_gallery_img_dscs[s_gallery_count].header.cf = LV_COLOR_FORMAT_RGB565;
                                     s_gallery_img_dscs[s_gallery_count].header.flags = 0;
-                                    s_gallery_img_dscs[s_gallery_count].header.w = 0;
-                                    s_gallery_img_dscs[s_gallery_count].header.h = 0;
-                                    s_gallery_img_dscs[s_gallery_count].header.stride = 0;
-                                    s_gallery_img_dscs[s_gallery_count].data_size = file_size;
-                                    s_gallery_img_dscs[s_gallery_count].data = psram_buf;
+                                    s_gallery_img_dscs[s_gallery_count].header.w = 466;
+                                    s_gallery_img_dscs[s_gallery_count].header.h = 466;
+                                    s_gallery_img_dscs[s_gallery_count].header.stride = 466 * 2;
+                                    s_gallery_img_dscs[s_gallery_count].data_size = DECODE_BUF_SIZE;
+                                    s_gallery_img_dscs[s_gallery_count].data = NULL; // Assigned later
                                     
                                     s_gallery_count++;
                                     ESP_LOGI(TAG, "=> PRELOADED to PSRAM: %s (%zu bytes)", fullpath, file_size);
@@ -882,18 +1006,22 @@ static void ui_gallery_show_image(int index) {
         lv_obj_center(s_dashboard_bg_img);
     }
     
+    // Always request decode when showing image (will do nothing if already cached/decoded)
+    if (s_decode_queue) {
+        uint32_t req = s_gallery_index;
+        xQueueSend(s_decode_queue, &req, 0);
+    }
+    
     // Smooth crossfade
     lv_obj_set_style_image_opa(s_dashboard_bg_img, 0, 0);
     
     if (s_preloaded_jpegs[s_gallery_index]) {
-        // Show loading message to the user because TJPGD software decode takes a few seconds
-        display_show_message("Decoding Image...\nPlease wait.");
-        lv_refr_now(NULL); // Force flush to display immediately
-        
-        // Use the uniquely distinct image descriptor so LVGL can properly cache the decoded RGB map!
-        lv_image_set_src(s_dashboard_bg_img, &s_gallery_img_dscs[s_gallery_index]);
-        
-        display_clear_message();
+        if (s_gallery_img_dscs[s_gallery_index].data != NULL) {
+            lv_image_set_src(s_dashboard_bg_img, &s_gallery_img_dscs[s_gallery_index]);
+        } else {
+            // It will be drawn later when the background task triggers lv_obj_invalidate
+            lv_image_set_src(s_dashboard_bg_img, NULL);
+        }
     }
     
     // Resume LVGL drawing
@@ -919,8 +1047,22 @@ static void gallery_enter_timer_cb(lv_timer_t *timer)
 static void ui_gallery_enter(void)
 {
     if (s_gallery_count > 0) {
-        /* Delay JPEG load by 400ms to allow LVGL screen transition to finish.
-           This prevents the LCD DMA from starving the SDMMC DMA! */
+        /* Allocate Triple Buffers */
+        if (!s_triple_buffers[0]) s_triple_buffers[0] = heap_caps_malloc(DECODE_BUF_SIZE, MALLOC_CAP_SPIRAM);
+        if (!s_triple_buffers[1]) s_triple_buffers[1] = heap_caps_malloc(DECODE_BUF_SIZE, MALLOC_CAP_SPIRAM);
+        if (!s_triple_buffers[2]) s_triple_buffers[2] = heap_caps_malloc(DECODE_BUF_SIZE, MALLOC_CAP_SPIRAM);
+        
+        s_buffer_indices[0] = -1;
+        s_buffer_indices[1] = -1;
+        s_buffer_indices[2] = -1;
+        
+        /* Queue initial decode request */
+        if (s_decode_queue) {
+            uint32_t req = s_gallery_index;
+            xQueueSend(s_decode_queue, &req, 0);
+        }
+
+        /* Delay image load slightly to allow UI transition */
         lv_timer_create(gallery_enter_timer_cb, 400, NULL);
     } else {
         lv_obj_t *fallback = lv_label_create(s_dashboard_screen);

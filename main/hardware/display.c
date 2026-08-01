@@ -96,17 +96,26 @@ static int gallery_outfunc(JDEC *jd, void *bitmap, JRECT *rect) {
     uint8_t *bgr888 = (uint8_t*)bitmap;
     uint16_t *dest = src->dest_buf;
     
+    // Center images smaller than 466x466
+    int offset_x = (466 - jd->width) / 2;
+    if (offset_x < 0) offset_x = 0;
+    int offset_y = (466 - jd->height) / 2;
+    if (offset_y < 0) offset_y = 0;
+    
     for (int y = rect->top; y <= rect->bottom; y++) {
         for (int x = rect->left; x <= rect->right; x++) {
             uint8_t b = *bgr888++;
             uint8_t g = *bgr888++;
             uint8_t r = *bgr888++;
             
-            if (x >= 466 || y >= 466) continue;
+            int dest_x = x + offset_x;
+            int dest_y = y + offset_y;
+            
+            if (dest_x >= 466 || dest_y >= 466) continue;
             
             // RGB888 to RGB565 (Little Endian)
             uint16_t color565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
-            dest[y * 466 + x] = color565;
+            dest[dest_y * 466 + dest_x] = color565;
         }
     }
     return 1;
@@ -131,16 +140,24 @@ static void decode_image_to_buffer(int index, uint16_t *dest_buf) {
         unsigned w, h;
         unsigned error = lodepng_decode32(&out, &w, &h, s_preloaded_jpegs[index], s_preloaded_sizes[index]);
         if (!error && out) {
+            uint32_t offset_x = w < 466 ? (466 - w) / 2 : 0;
+            uint32_t offset_y = h < 466 ? (466 - h) / 2 : 0;
             uint32_t max_w = w > 466 ? 466 : w;
             uint32_t max_h = h > 466 ? 466 : h;
-            memset(dest_buf, 0, DECODE_BUF_SIZE);
+            
             for (uint32_t y = 0; y < max_h; y++) {
                 for (uint32_t x = 0; x < max_w; x++) {
                     uint8_t r = out[(y * w + x) * 4 + 0];
                     uint8_t g = out[(y * w + x) * 4 + 1];
                     uint8_t b = out[(y * w + x) * 4 + 2];
+                    
+                    uint32_t dest_x = x + offset_x;
+                    uint32_t dest_y = y + offset_y;
+                    
+                    if (dest_x >= 466 || dest_y >= 466) continue;
+                    
                     uint16_t color565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
-                    dest_buf[y * 466 + x] = color565;
+                    dest_buf[dest_y * 466 + dest_x] = color565;
                 }
             }
             free(out);

@@ -95,16 +95,15 @@ static UINT gallery_outfunc(JDEC *jd, void *bitmap, JRECT *rect) {
     uint8_t *rgb888 = (uint8_t*)bitmap;
     uint16_t *dest = src->dest_buf;
     
-    // We assume 466x466 width. 
-    // Out of bounds check
-    if (rect->right >= 466 || rect->bottom >= 466) return 1;
-
     for (int y = rect->top; y <= rect->bottom; y++) {
         for (int x = rect->left; x <= rect->right; x++) {
             uint8_t r = *rgb888++;
             uint8_t g = *rgb888++;
             uint8_t b = *rgb888++;
-            // RGB888 to RGB565 (Little Endian for ESP32/LVGL defaults usually, unless SWAP is enabled)
+            
+            if (x >= 466 || y >= 466) continue;
+            
+            // RGB888 to RGB565 (Little Endian for ESP32/LVGL defaults usually)
             uint16_t color565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
             dest[y * 466 + x] = color565;
         }
@@ -112,30 +111,62 @@ static UINT gallery_outfunc(JDEC *jd, void *bitmap, JRECT *rect) {
     return 1;
 }
 
+extern unsigned lodepng_decode32(unsigned char** out, unsigned* w, unsigned* h, const unsigned char* in, size_t insize);
+
 static void decode_image_to_buffer(int index, uint16_t *dest_buf) {
     if (index < 0 || index >= s_gallery_count) return;
     if (!s_preloaded_jpegs[index] || !dest_buf) return;
     
-    // For now we only support JPEGs in this custom TJPGD fast path.
-    // PNGs will just fall back to LVGL if they aren't parsed here, but we will focus on JPEG.
-    
-    jpg_src_t src = {
-        .data = s_preloaded_jpegs[index],
-        .size = s_preloaded_sizes[index],
-        .pos = 0,
-        .dest_buf = dest_buf
-    };
-    
-    uint8_t *workb = malloc(4096); // Enough for ROM TJPGD
-    if (!workb) return;
-    
-    JDEC jd;
-    JRESULT rc = jd_prepare(&jd, gallery_infunc, workb, 4096, &src);
-    if (rc == JDR_OK) {
-        // Output scaled to 1:1
-        jd_decomp(&jd, gallery_outfunc, 0);
+    if (strstr(s_gallery_paths[index], ".png") || strstr(s_gallery_paths[index], ".PNG")) {
+        // Handle PNG
+        unsigned char* out = NULL;
+        unsigned w, h;
+        unsigned error = lodepng_decode32(&out, &w, &h, s_preloaded_jpegs[index], s_preloaded_sizes[index]);
+        if (!error && out) {
+            uint32_t max_w = w > 466 ? 466 : w;
+            uint32_t max_h = h > 466 ? 466 : h;
+            memset(dest_buf, 0, DECODE_BUF_SIZE);
+            for (uint32_t y = 0; y < max_h; y++) {
+                for (uint32_t x = 0; x < max_w; x++) {
+                    uint8_t r = out[(y * w + x) * 4 + 0];
+                    uint8_t g = out[(y * w + x) * 4 + 1];
+                    uint8_t b = out[(y * w + x) * 4 + 2];
+                    uint16_t color565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+                    dest_buf[y * 466 + x] = color565;
+                }
+            }
+            free(out);
+            ESP_LOGI(TAG, "LodePNG decode success for index %d", index);
+        } else {
+            ESP_LOGE(TAG, "LodePNG decode failed for index %d: %u", index, error);
+            if (out) free(out);
+        }
+    } else {
+        // Handle JPEG
+        jpg_src_t src = {
+            .data = s_preloaded_jpegs[index],
+            .size = s_preloaded_sizes[index],
+            .pos = 0,
+            .dest_buf = dest_buf
+        };
+        
+        uint8_t *workb = malloc(4096);
+        if (!workb) return;
+        
+        JDEC jd;
+        JRESULT rc = jd_prepare(&jd, gallery_infunc, workb, 4096, &src);
+        if (rc == JDR_OK) {
+            JRESULT rc2 = jd_decomp(&jd, gallery_outfunc, 0);
+            if (rc2 != JDR_OK) {
+                ESP_LOGE(TAG, "jd_decomp failed for index %d: %d", index, rc2);
+            } else {
+                ESP_LOGI(TAG, "TJPGD decode success for index %d", index);
+            }
+        } else {
+            ESP_LOGE(TAG, "jd_prepare failed for index %d: %d", index, rc);
+        }
+        free(workb);
     }
-    free(workb);
 }
 
 static void gallery_decode_task(void *arg) {
@@ -143,7 +174,7 @@ static void gallery_decode_task(void *arg) {
         uint32_t req_index;
         if (xQueueReceive(s_decode_queue, &req_index, portMAX_DELAY)) {
             // Determine adjacent indices
-            int prev = (req_index - 1 < 0) ? s_gallery_count - 1 : req_index - 1;
+            int prev = (req_index == 0) ? s_gallery_count - 1 : req_index - 1;
             int next = (req_index + 1 >= s_gallery_count) ? 0 : req_index + 1;
             
             // Decode CURRENT (priority 1)
@@ -305,7 +336,8 @@ esp_err_t display_init(void)
     /* Initialize Gallery Decode Task */
     s_decode_queue = xQueueCreate(10, sizeof(uint32_t));
     if (s_decode_queue) {
-        xTaskCreate(gallery_decode_task, "gallery_dec", 8192, NULL, 5, &s_decode_task_handle);
+        // Reduce priority to 2 so it doesn't starve the LVGL task (which is priority 4/5)
+        xTaskCreatePinnedToCore(gallery_decode_task, "gallery_dec", 8192, NULL, 2, &s_decode_task_handle, 1);
     }
     
     
@@ -367,6 +399,13 @@ void ui_switch_to_screen_anim(ui_screen_t screen, lv_scr_load_anim_t anim_type)
             lv_obj_del(s_batt_overlay);
             s_batt_overlay = NULL;
         }
+        
+        // Free the dynamically allocated triple buffers to conserve PSRAM!
+        if (s_triple_buffers[0]) { heap_caps_free(s_triple_buffers[0]); s_triple_buffers[0] = NULL; }
+        if (s_triple_buffers[1]) { heap_caps_free(s_triple_buffers[1]); s_triple_buffers[1] = NULL; }
+        if (s_triple_buffers[2]) { heap_caps_free(s_triple_buffers[2]); s_triple_buffers[2] = NULL; }
+        s_buffer_indices[0] = s_buffer_indices[1] = s_buffer_indices[2] = -1;
+        
     } else if (screen == UI_SCREEN_DASHBOARD && s_current_screen != UI_SCREEN_DASHBOARD) {
         ui_gallery_enter();
     }

@@ -110,27 +110,29 @@ static void outbound_dispatch_task(void *arg) {
 }
 
 void mimi_update_dashboard(bool thinking, bool force_redraw) {
-  // static shtc3_data_t s_cached_sd = {0};
-  // static int64_t s_last_read_ms = 0;
+  static shtc3_data_t s_cached_sd = {0};
+  static int64_t s_last_read_ms = 0;
   int64_t now_ms = esp_timer_get_time() / 1000;
 
   /* Only read sensor every 30 seconds to save power/clutter */
-  /*
   if (now_ms - s_last_read_ms > 30000 || s_last_read_ms == 0) {
     if (shtc3_read(&s_cached_sd) == ESP_OK) {
       s_last_read_ms = now_ms;
     }
   }
-  */
 
-  shtc3_data_t sd = {0}; // s_cached_sd;
+  shtc3_data_t sd = s_cached_sd;
 
-  char ssid_db[32] = {0};
-  nvs_handle_t nvs_db;
-  if (nvs_open(MIMI_NVS_WIFI, NVS_READONLY, &nvs_db) == ESP_OK) {
-    size_t len = sizeof(ssid_db);
-    nvs_get_str(nvs_db, MIMI_NVS_KEY_SSID, ssid_db, &len);
-    nvs_close(nvs_db);
+  static char ssid_db[32] = {0};
+  static bool ssid_loaded = false;
+  if (!ssid_loaded) {
+    nvs_handle_t nvs_db;
+    if (nvs_open(MIMI_NVS_WIFI, NVS_READONLY, &nvs_db) == ESP_OK) {
+      size_t len = sizeof(ssid_db);
+      nvs_get_str(nvs_db, MIMI_NVS_KEY_SSID, ssid_db, &len);
+      nvs_close(nvs_db);
+    }
+    ssid_loaded = true;
   }
 
   char up_db[32];
@@ -152,21 +154,23 @@ void mimi_update_dashboard(bool thinking, bool force_redraw) {
 
 void execute_button_action(int action_id) {
   if (action_id == 1 || action_id == 2) {
-    nvs_handle_t nvs_db;
-    char ssid_db[32] = "N/A";
-    if (nvs_open(MIMI_NVS_WIFI, NVS_READONLY, &nvs_db) == ESP_OK) {
-      size_t len = sizeof(ssid_db);
-      nvs_get_str(nvs_db, MIMI_NVS_KEY_SSID, ssid_db, &len);
-      nvs_close(nvs_db);
+    static char ssid_db[32] = "N/A";
+    static bool ssid_loaded = false;
+    if (!ssid_loaded) {
+      nvs_handle_t nvs_db;
+      if (nvs_open(MIMI_NVS_WIFI, NVS_READONLY, &nvs_db) == ESP_OK) {
+        size_t len = sizeof(ssid_db);
+        nvs_get_str(nvs_db, MIMI_NVS_KEY_SSID, ssid_db, &len);
+        nvs_close(nvs_db);
+      }
+      ssid_loaded = true;
     }
 
     shtc3_data_t sd = {0};
-    /*
     esp_err_t err = shtc3_read(&sd);
     if (err != ESP_OK) {
       ESP_LOGE(TAG, "Failed to read SHTC3 sensor: %s", esp_err_to_name(err));
     }
-    */
 
     char up_db[32];
     agent_metrics_get_uptime_str(up_db, sizeof(up_db));
@@ -227,12 +231,12 @@ void execute_button_action(int action_id) {
                  up_db);
 
         mimi_msg_t msg = {.channel = "telegram",
-                          .chat_id = "6357689474",
+                          .chat_id = MIMI_SECRET_TG_ADMIN_CHAT_ID,
                           .content = strdup(buf)};
         message_bus_push_outbound(&msg);
 
         mimi_msg_t msg_dc = {.channel = "discord",
-                             .chat_id = "1520521736817475797",
+                             .chat_id = MIMI_SECRET_DISCORD_ADMIN_CHANNEL_ID,
                              .content = strdup(buf)};
         message_bus_push_outbound(&msg_dc);
 
@@ -288,7 +292,7 @@ void app_main(void) {
 
   xTaskCreate(ui_task, "ui_task", 4096, NULL, 5, NULL);
 
-  // ESP_ERROR_CHECK(shtc3_init()); // Disabled for AMOLED migration
+  ESP_ERROR_CHECK(shtc3_init());
   ESP_ERROR_CHECK(buttons_init());
   ESP_ERROR_CHECK(battery_init());
   ESP_ERROR_CHECK(led_init());
@@ -353,11 +357,11 @@ void app_main(void) {
       led_set_state_color(MIMI_COLOR_ONLINE); // Set Green (Online)
 
       /* Start network-dependent services */
+      ws_server_start();
       telegram_bot_start();
       /* Start AI Agent, Discord, etc. */
       discord_bot_start();
       agent_loop_start();
-      ws_server_start();
 
       /* Outbound dispatch task */
       xTaskCreatePinnedToCore(outbound_dispatch_task, "outbound",

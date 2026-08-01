@@ -241,7 +241,7 @@ static void gallery_decode_task(void *arg) {
 }
 
 /* File System RAM Cache (Bypasses concurrent DMA issues during UI) */
-#define MAX_FS_NODES 256
+#define MAX_FS_NODES 512
 typedef struct {
     char parent_path[128];
     char name[64];

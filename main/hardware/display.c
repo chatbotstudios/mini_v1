@@ -37,7 +37,8 @@ static lv_obj_t *s_home_screen = NULL;
 static lv_obj_t *s_offline_screen = NULL;
 static lv_obj_t *s_dashboard_screen = NULL;
 static lv_obj_t *s_filesystem_screen = NULL;
-static lv_obj_t *s_settings_screen = NULL;
+static lv_obj_t *s_settings_panel = NULL;
+static bool s_settings_is_open = false;
 
 static lv_obj_t *s_welcome_msg_label = NULL;
 
@@ -301,7 +302,7 @@ static void create_page_indicator(void);
 static void create_offline_screen(void);
 static void create_dashboard_screen(void);
 static void create_filesystem_screen(void);
-static void create_settings_screen(void);
+static void create_settings_panel(void);
 static void settings_event_cb(lv_event_t *e);
 static void ui_gallery_enter(void);
 static void load_directory(const char *path);
@@ -346,7 +347,7 @@ esp_err_t display_init(void)
     create_offline_screen();
     create_dashboard_screen();
     create_filesystem_screen();
-    create_settings_screen();
+    create_settings_panel();
     create_page_indicator();
 
     /* Start on splash */
@@ -448,7 +449,6 @@ void ui_switch_to_screen_anim(ui_screen_t screen, lv_scr_load_anim_t anim_type)
         case UI_SCREEN_OFFLINE:  target = s_offline_screen; break;
         case UI_SCREEN_DASHBOARD: target = s_dashboard_screen; break;
         case UI_SCREEN_FILESYSTEM: target = s_filesystem_screen; break;
-        case UI_SCREEN_SETTINGS: target = s_settings_screen; break;
         default: break;
     }
 
@@ -755,20 +755,75 @@ static void settings_event_cb(lv_event_t *e) {
     }
 }
 
-static void create_settings_screen(void) {
-    s_settings_screen = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(s_settings_screen, lv_color_hex(0x222222), 0);
-    lv_obj_set_style_bg_opa(s_settings_screen, LV_OPA_COVER, 0);
+static void settings_anim_y_cb(void * var, int32_t v) {
+    lv_obj_set_y((lv_obj_t *)var, v);
+}
+
+static void ui_settings_show(void) {
+    if (s_settings_is_open || !s_settings_panel) return;
+    s_settings_is_open = true;
+    
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_settings_panel);
+    lv_anim_set_values(&a, 466, 0);
+    lv_anim_set_time(&a, 300);
+    lv_anim_set_exec_cb(&a, settings_anim_y_cb);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_start(&a);
+}
+
+static void ui_settings_hide(void) {
+    if (!s_settings_is_open || !s_settings_panel) return;
+    s_settings_is_open = false;
+    
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_settings_panel);
+    lv_anim_set_values(&a, 0, 466);
+    lv_anim_set_time(&a, 300);
+    lv_anim_set_exec_cb(&a, settings_anim_y_cb);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
+    lv_anim_start(&a);
+}
+
+static void settings_panel_close_cb(lv_event_t *e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_CLICKED) {
+        ui_settings_hide();
+    } else if (code == LV_EVENT_GESTURE) {
+        if (lv_indev_get_gesture_dir(lv_indev_active()) == LV_DIR_BOTTOM) {
+            ui_settings_hide();
+        }
+    }
+}
+
+static void create_settings_panel(void) {
+    s_settings_panel = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(s_settings_panel, 466, 466);
+    lv_obj_set_y(s_settings_panel, 466); // Start hidden off-screen
+    lv_obj_set_style_bg_color(s_settings_panel, lv_color_hex(0x1a1a2e), 0);
+    lv_obj_set_style_bg_opa(s_settings_panel, LV_OPA_90, 0);
+    lv_obj_set_style_border_width(s_settings_panel, 0, 0);
     
     // Title
-    lv_obj_t *title = lv_label_create(s_settings_screen);
+    lv_obj_t *title = lv_label_create(s_settings_panel);
     lv_label_set_text(title, "Settings");
     lv_obj_set_style_text_font(title, &inter_24, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0x00FFCC), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 15);
     
+    // Close Button
+    lv_obj_t *close_btn = lv_label_create(s_settings_panel);
+    lv_label_set_text(close_btn, LV_SYMBOL_CLOSE);
+    lv_obj_set_style_text_font(close_btn, &inter_24, 0);
+    lv_obj_set_style_text_color(close_btn, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_align(close_btn, LV_ALIGN_TOP_RIGHT, -15, 15);
+    lv_obj_add_flag(close_btn, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(close_btn, settings_panel_close_cb, LV_EVENT_CLICKED, NULL);
+    
     // Settings List
-    s_settings_list = lv_list_create(s_settings_screen);
+    s_settings_list = lv_list_create(s_settings_panel);
     lv_obj_set_size(s_settings_list, 420, 370);
     lv_obj_align(s_settings_list, LV_ALIGN_BOTTOM_MID, 0, -20);
     lv_obj_set_style_bg_color(s_settings_list, lv_color_hex(0x111111), 0);
@@ -821,7 +876,7 @@ static void create_settings_screen(void) {
     lv_obj_add_event_cb(reboot_btn, settings_event_cb, LV_EVENT_CLICKED, "reboot");
     
     // Allow swiping back down
-    lv_obj_add_event_cb(s_settings_screen, screen_gesture_cb, LV_EVENT_GESTURE, NULL);
+    lv_obj_add_event_cb(s_settings_panel, settings_panel_close_cb, LV_EVENT_GESTURE, NULL);
 }
 
 /* ==================== SCREEN CREATION ==================== */
@@ -1176,24 +1231,18 @@ static void offline_tap_cb(lv_event_t *e)
     ui_show_random_welcome();
 }
 
-static ui_screen_t s_previous_screen = UI_SCREEN_HOME;
+
 
 static void screen_gesture_cb(lv_event_t *e)
 {
     lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_active());
     
-    if (dir == LV_DIR_TOP && s_current_screen != UI_SCREEN_SETTINGS && s_current_screen != UI_SCREEN_SPLASH) {
-        s_previous_screen = s_current_screen;
-        ui_switch_to_screen_anim(UI_SCREEN_SETTINGS, LV_SCR_LOAD_ANIM_MOVE_TOP);
+    if (dir == LV_DIR_TOP && s_current_screen != UI_SCREEN_SPLASH) {
+        ui_settings_show();
         return;
     }
     
-    if (s_current_screen == UI_SCREEN_SETTINGS) {
-        if (dir == LV_DIR_BOTTOM) {
-            ui_switch_to_screen_anim(s_previous_screen, LV_SCR_LOAD_ANIM_MOVE_BOTTOM);
-        }
-        return;
-    }
+    if (s_settings_is_open) return; // Prevent horizontal screen transitions while settings is open
     
     if (s_current_screen == UI_SCREEN_HOME) {
         if (dir == LV_DIR_RIGHT) {

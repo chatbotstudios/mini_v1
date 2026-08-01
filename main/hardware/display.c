@@ -12,7 +12,8 @@
 #include <stdlib.h>
 #include <dirent.h>
 #include <sys/stat.h>
-#include <rom/tjpgd.h>
+#include "../../../managed_components/lvgl__lvgl/src/libs/tjpgd/tjpgd.h"
+#include "../../../managed_components/lvgl__lvgl/src/libs/lodepng/lodepng.h"
 #include "esp_random.h"
 #include <errno.h>
 #include "esp_heap_caps.h"
@@ -80,17 +81,17 @@ typedef struct {
     uint16_t *dest_buf;
 } jpg_src_t;
 
-static UINT gallery_infunc(JDEC *jd, BYTE *buff, UINT ndata) {
+static size_t gallery_infunc(JDEC *jd, uint8_t *buff, size_t ndata) {
     jpg_src_t *src = (jpg_src_t*)jd->device;
     if (!src || src->pos >= src->size) return 0;
-    UINT len = src->size - src->pos;
+    size_t len = src->size - src->pos;
     if (len > ndata) len = ndata;
     if (buff) memcpy(buff, src->data + src->pos, len);
     src->pos += len;
     return len;
 }
 
-static UINT gallery_outfunc(JDEC *jd, void *bitmap, JRECT *rect) {
+static int gallery_outfunc(JDEC *jd, void *bitmap, JRECT *rect) {
     jpg_src_t *src = (jpg_src_t*)jd->device;
     uint8_t *rgb888 = (uint8_t*)bitmap;
     uint16_t *dest = src->dest_buf;

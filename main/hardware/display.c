@@ -12,8 +12,8 @@
 #include <stdlib.h>
 #include <dirent.h>
 #include <sys/stat.h>
-#include "../../../managed_components/lvgl__lvgl/src/libs/tjpgd/tjpgd.h"
-#include "../../../managed_components/lvgl__lvgl/src/libs/lodepng/lodepng.h"
+#include "../../../components/lvgl__lvgl/src/libs/tjpgd/tjpgd.h"
+#include "../../../components/lvgl__lvgl/src/libs/lodepng/lodepng.h"
 #include "esp_random.h"
 #include <errno.h>
 #include "esp_heap_caps.h"

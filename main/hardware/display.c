@@ -247,7 +247,7 @@ typedef struct {
     char name[64];
     bool is_dir;
 } fs_node_t;
-static fs_node_t s_fs_nodes[MAX_FS_NODES];
+static fs_node_t *s_fs_nodes = NULL;
 static int s_fs_node_count = 0;
 static lv_obj_t *s_batt_overlay = NULL;
 
@@ -322,6 +322,12 @@ static void gallery_enter_timer_cb(lv_timer_t *timer);
 esp_err_t display_init(void)
 {
     ESP_LOGI(TAG, "Initializing AMOLED + LVGL display (BSP)...");
+
+    s_fs_nodes = (fs_node_t *)heap_caps_malloc(MAX_FS_NODES * sizeof(fs_node_t), MALLOC_CAP_SPIRAM);
+    if (!s_fs_nodes) {
+        ESP_LOGE(TAG, "Failed to allocate fs_nodes in PSRAM");
+        return ESP_ERR_NO_MEM;
+    }
 
     bsp_display_cfg_t cfg = {
         .lv_adapter_cfg = ESP_LV_ADAPTER_DEFAULT_CONFIG(),

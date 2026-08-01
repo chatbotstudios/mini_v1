@@ -93,18 +93,18 @@ static size_t gallery_infunc(JDEC *jd, uint8_t *buff, size_t ndata) {
 
 static int gallery_outfunc(JDEC *jd, void *bitmap, JRECT *rect) {
     jpg_src_t *src = (jpg_src_t*)jd->device;
-    uint8_t *rgb888 = (uint8_t*)bitmap;
+    uint8_t *bgr888 = (uint8_t*)bitmap;
     uint16_t *dest = src->dest_buf;
     
     for (int y = rect->top; y <= rect->bottom; y++) {
         for (int x = rect->left; x <= rect->right; x++) {
-            uint8_t r = *rgb888++;
-            uint8_t g = *rgb888++;
-            uint8_t b = *rgb888++;
+            uint8_t b = *bgr888++;
+            uint8_t g = *bgr888++;
+            uint8_t r = *bgr888++;
             
             if (x >= 466 || y >= 466) continue;
             
-            // RGB888 to RGB565 (Little Endian for ESP32/LVGL defaults usually)
+            // RGB888 to RGB565 (Little Endian)
             uint16_t color565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
             dest[y * 466 + x] = color565;
         }
@@ -118,6 +118,8 @@ static void decode_image_to_buffer(int index, uint16_t *dest_buf) {
     if (index < 0 || index >= s_gallery_count) return;
     if (!s_preloaded_jpegs[index] || !dest_buf) return;
     if (s_preloaded_sizes[index] < 8) return;
+    
+    memset(dest_buf, 0, DECODE_BUF_SIZE); // Clear buffer so failed decodes show black instead of previous image
     
     // Check magic bytes instead of extension (AI generators often mislabel PNGs as JPGs)
     bool is_png = (s_preloaded_jpegs[index][0] == 0x89 && s_preloaded_jpegs[index][1] == 0x50 && 

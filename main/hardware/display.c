@@ -656,8 +656,13 @@ static void load_directory(const char *path) {
 }
 
 static void fs_list_btn_cb(lv_event_t *e) {
-    char *path = (char *)lv_event_get_user_data(e);
-    if (!path) return;
+    char *path_ptr = (char *)lv_event_get_user_data(e);
+    if (!path_ptr) return;
+    
+    // Duplicate path to prevent overlapping snprintf corruption when loading new directory
+    char path[512];
+    strncpy(path, path_ptr, sizeof(path) - 1);
+    path[sizeof(path) - 1] = '\0';
     
     if (strcmp(path, "..") == 0) {
         // Go up one directory

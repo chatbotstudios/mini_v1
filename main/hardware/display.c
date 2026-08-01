@@ -58,12 +58,12 @@ static bool s_is_thinking = false;
 /* Gallery State */
 #define MAX_GALLERY_IMAGES 32
 static int s_gallery_count = 0;
-static int s_gallery_index = 0;
 static char *s_gallery_paths[MAX_GALLERY_IMAGES] = {0};
-
+static int s_gallery_index = 0;
 /* PSRAM Preloader for Images (Bypasses concurrent DMA issues) */
 static uint8_t *s_preloaded_jpegs[MAX_GALLERY_IMAGES] = {0};
 static size_t s_preloaded_sizes[MAX_GALLERY_IMAGES] = {0};
+static lv_image_dsc_t s_gallery_img_dscs[MAX_GALLERY_IMAGES] = {0};
 
 /* File System RAM Cache (Bypasses concurrent DMA issues during UI) */
 #define MAX_FS_NODES 256
@@ -74,19 +74,6 @@ typedef struct {
 } fs_node_t;
 static fs_node_t s_fs_nodes[MAX_FS_NODES];
 static int s_fs_node_count = 0;
-
-static lv_image_dsc_t s_psram_img_dsc = {
-    .header = {
-        .magic = LV_IMAGE_HEADER_MAGIC,
-        .cf = LV_COLOR_FORMAT_RAW,
-        .flags = 0,
-        .w = 0,
-        .h = 0,
-        .stride = 0,
-    },
-    .data_size = 0,
-    .data = NULL,
-};
 static lv_obj_t *s_batt_overlay = NULL;
 
 /* Dashboard UI elements */
@@ -846,6 +833,17 @@ static void scan_gallery_dir(const char *dir_path) {
                                     s_preloaded_jpegs[s_gallery_count] = psram_buf;
                                     s_preloaded_sizes[s_gallery_count] = file_size;
                                     s_gallery_paths[s_gallery_count] = strdup(fullpath);
+                                    
+                                    // Initialize distinct LVGL image descriptor for cache recognition
+                                    s_gallery_img_dscs[s_gallery_count].header.magic = LV_IMAGE_HEADER_MAGIC;
+                                    s_gallery_img_dscs[s_gallery_count].header.cf = LV_COLOR_FORMAT_RAW;
+                                    s_gallery_img_dscs[s_gallery_count].header.flags = 0;
+                                    s_gallery_img_dscs[s_gallery_count].header.w = 0;
+                                    s_gallery_img_dscs[s_gallery_count].header.h = 0;
+                                    s_gallery_img_dscs[s_gallery_count].header.stride = 0;
+                                    s_gallery_img_dscs[s_gallery_count].data_size = file_size;
+                                    s_gallery_img_dscs[s_gallery_count].data = psram_buf;
+                                    
                                     s_gallery_count++;
                                     ESP_LOGI(TAG, "=> PRELOADED to PSRAM: %s (%zu bytes)", fullpath, file_size);
                                 } else {
@@ -888,9 +886,8 @@ static void ui_gallery_show_image(int index) {
     lv_obj_set_style_image_opa(s_dashboard_bg_img, 0, 0);
     
     if (s_preloaded_jpegs[s_gallery_index]) {
-        s_psram_img_dsc.data = s_preloaded_jpegs[s_gallery_index];
-        s_psram_img_dsc.data_size = s_preloaded_sizes[s_gallery_index];
-        lv_image_set_src(s_dashboard_bg_img, &s_psram_img_dsc);
+        // Use the uniquely distinct image descriptor so LVGL can properly cache the decoded RGB map!
+        lv_image_set_src(s_dashboard_bg_img, &s_gallery_img_dscs[s_gallery_index]);
     }
     
     // Resume LVGL drawing
